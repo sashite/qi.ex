@@ -1,214 +1,273 @@
 defmodule Qi.Board do
   @moduledoc """
-  Pure validation functions for multi-dimensional board structures.
+  Flat-tuple board creation and transformation.
 
-  A board is represented as a nested list where:
+  A board is stored as a flat tuple of `tuple_size` elements in **row-major
+  order**. Each element is either `nil` (empty square) or a `String.t()`
+  (a piece).
 
-    * A **1D board** is a flat list of squares: `[nil, "K^", nil]`
-    * A **2D board** is a list of ranks: `[[nil, nil], ["K^", nil]]`
-    * A **3D board** is a list of layers, each a list of ranks.
+  The board's shape (a list of dimension sizes such as `[8, 8]`) determines
+  how flat indices map to multi-dimensional coordinates, but the shape itself
+  is stored outside this module (on the `Qi` struct).
 
-  Each leaf element (square) is either `nil` (empty) or any non-nil term (a piece).
+  ## Flat indexing (row-major)
 
-  ## Constraints
+    * **1D** `[f]` — `index = f`
+    * **2D** `[r, f]` — `index = r * F + f`
+    * **3D** `[l, r, f]` — `index = l * R * F + r * F + f`
 
-    * Maximum dimensionality: 3
-    * Maximum size per dimension: 255
-    * At least one square (non-empty board)
-    * Rectangular structure: all sub-arrays at the same depth must have
-      identical length (enforced globally, not just per-sibling).
+  ## Performance notes
 
-  ## Examples
-
-      iex> Qi.Board.validate([[:a, nil], [nil, :b]])
-      {:ok, {4, 2}}
-
-      iex> Qi.Board.validate([[nil, nil, nil], [nil, nil, nil], [nil, nil, nil]])
-      {:ok, {9, 0}}
+  `elem/2` is O(1). `put_elem/3` copies the tuple (O(n) where n is the
+  number of squares), but the constant factor is very low — it is the
+  fastest random-update structure available in the BEAM for fixed-size
+  collections.
   """
 
   @max_dimensions 3
   @max_dimension_size 255
 
-  @typedoc "A square is either empty (nil) or occupied by any piece term."
-  @type square :: nil | term()
+  @doc "Maximum number of board dimensions."
+  @spec max_dimensions() :: pos_integer()
+  def max_dimensions, do: @max_dimensions
 
-  @typedoc "A board is a (possibly nested) list of squares."
-  @type t :: [square()] | [[square()]] | [[[square()]]]
+  @doc "Maximum size of any single dimension."
+  @spec max_dimension_size() :: pos_integer()
+  def max_dimension_size, do: @max_dimension_size
+
+  # ---------------------------------------------------------------------------
+  # Shape validation
+  # ---------------------------------------------------------------------------
 
   @doc """
-  Validates a board and returns its square and piece counts.
+  Validates a board shape and returns the total number of squares.
 
-  Returns `{:ok, {square_count, piece_count}}` if the board is structurally
-  valid, or `{:error, %ArgumentError{}}` otherwise.
-
-  Validation proceeds in order of increasing cost: type check, emptiness,
-  shape inference (first-path walk), dimension limits, then a single-pass
-  structural verification with counting.
+  A shape is a list of 1 to #{@max_dimensions} positive integers, each at
+  most #{@max_dimension_size}.
 
   ## Examples
 
-  A 2D board:
+      iex> Qi.Board.validate_shape([8, 8])
+      {:ok, 64}
 
-      iex> Qi.Board.validate([[:r, nil, nil], [nil, nil, :R]])
-      {:ok, {6, 2}}
+      iex> Qi.Board.validate_shape([9, 9])
+      {:ok, 81}
 
-  A 1D board:
+      iex> Qi.Board.validate_shape([5, 5, 5])
+      {:ok, 125}
 
-      iex> Qi.Board.validate([:k, nil, nil, :K])
-      {:ok, {4, 2}}
+      iex> Qi.Board.validate_shape([])
+      {:error, %ArgumentError{message: "at least one dimension is required"}}
 
-  A 3D board (2 layers × 2 ranks × 2 files):
-
-      iex> Qi.Board.validate([[[:a, nil], [nil, :b]], [[nil, :c], [:d, nil]]])
-      {:ok, {8, 4}}
-
-  Non-rectangular boards are rejected:
-
-      iex> Qi.Board.validate([[:a, :b], [:c]])
-      {:error, %ArgumentError{message: "non-rectangular board: expected 2 elements, got 1"}}
+      iex> Qi.Board.validate_shape([8, 8, 8, 8])
+      {:error, %ArgumentError{message: "board exceeds 3 dimensions (got 4)"}}
   """
-  @spec validate(term()) ::
-          {:ok, {pos_integer(), non_neg_integer()}} | {:error, Exception.t()}
-  def validate(board) do
-    with :ok <- validate_is_list(board),
-         :ok <- validate_non_empty(board),
-         {:ok, shape} <- compute_shape(board),
-         :ok <- validate_max_dimensions(shape),
-         :ok <- validate_dimension_sizes(shape) do
-      verify_and_count(board, shape)
+  @spec validate_shape(term()) :: {:ok, pos_integer()} | {:error, Exception.t()}
+  def validate_shape(shape) when is_list(shape) and shape != [] do
+    with :ok <- validate_dimension_count(shape) do
+      validate_dimension_values(shape, 1)
     end
   end
 
-  # ---------------------------------------------------------------------------
-  # Step 1: basic type checks
-  # ---------------------------------------------------------------------------
-
-  defp validate_is_list(board) when is_list(board), do: :ok
-  defp validate_is_list(_), do: {:error, %ArgumentError{message: "board must be a list"}}
-
-  defp validate_non_empty([]), do: {:error, %ArgumentError{message: "board must not be empty"}}
-  defp validate_non_empty(_), do: :ok
-
-  # ---------------------------------------------------------------------------
-  # Step 2: compute expected shape by walking the first element at each level
-  # ---------------------------------------------------------------------------
-
-  # The shape is a list of dimension sizes, e.g. [2, 3, 8] for
-  # 2 layers × 3 ranks × 8 files. We derive it by following the first
-  # child at each nesting level.
-
-  defp compute_shape(board), do: compute_shape(board, [])
-
-  defp compute_shape([first | _] = list, acc) when is_list(first) do
-    compute_shape(first, [length(list) | acc])
+  def validate_shape(_) do
+    {:error, %ArgumentError{message: "at least one dimension is required"}}
   end
 
-  defp compute_shape(list, acc) when is_list(list) do
-    {:ok, Enum.reverse([length(list) | acc])}
-  end
+  defp validate_dimension_count(shape) do
+    count = length(shape)
 
-  # ---------------------------------------------------------------------------
-  # Step 3: validate dimension count and sizes
-  # ---------------------------------------------------------------------------
-
-  defp validate_max_dimensions(shape) do
-    dim = length(shape)
-
-    if dim <= @max_dimensions do
+    if count <= @max_dimensions do
       :ok
     else
       {:error,
        %ArgumentError{
-         message: "board exceeds #{@max_dimensions} dimensions (got #{dim})"
+         message: "board exceeds #{@max_dimensions} dimensions (got #{count})"
        }}
     end
   end
 
-  defp validate_dimension_sizes(shape) do
-    case Enum.find(shape, fn size -> size > @max_dimension_size end) do
-      nil ->
-        :ok
+  defp validate_dimension_values([], product), do: {:ok, product}
 
-      size ->
-        {:error,
-         %ArgumentError{
-           message: "dimension size #{size} exceeds maximum of #{@max_dimension_size}"
-         }}
+  defp validate_dimension_values([dim | rest], product)
+       when is_integer(dim) and dim >= 1 and dim <= @max_dimension_size do
+    validate_dimension_values(rest, product * dim)
+  end
+
+  defp validate_dimension_values([dim | _], _) when is_integer(dim) and dim < 1 do
+    {:error, %ArgumentError{message: "dimension size must be at least 1, got #{dim}"}}
+  end
+
+  defp validate_dimension_values([dim | _], _) when is_integer(dim) do
+    {:error,
+     %ArgumentError{
+       message: "dimension size #{dim} exceeds maximum of #{@max_dimension_size}"
+     }}
+  end
+
+  defp validate_dimension_values([dim | _], _) do
+    {:error,
+     %ArgumentError{
+       message: "dimension size must be an integer, got #{inspect(dim)}"
+     }}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Board creation
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Creates an empty board (all `nil`) with the given number of squares.
+
+  ## Examples
+
+      iex> Qi.Board.new(4)
+      {nil, nil, nil, nil}
+  """
+  @spec new(pos_integer()) :: tuple()
+  def new(total_squares) when is_integer(total_squares) and total_squares > 0 do
+    Tuple.duplicate(nil, total_squares)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diff application
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Applies a list of changes to a board and returns the piece count delta.
+
+  Each change is a `{flat_index, piece}` tuple where `piece` is a
+  `String.t()` or `nil` (to clear a square).
+
+  Returns `{:ok, {new_board, piece_delta}}` where `piece_delta` is the net
+  change in piece count (positive = pieces added, negative = pieces removed).
+
+  ## Examples
+
+      iex> board = Qi.Board.new(4)
+      iex> Qi.Board.diff(board, [{0, "K"}, {3, "k"}])
+      {:ok, {"K", nil, nil, "k"}, 2}
+
+      iex> board = {"K", nil, nil, "k"}
+      iex> Qi.Board.diff(board, [{0, nil}, {1, "K"}])
+      {:ok, {nil, "K", nil, "k"}, 0}
+
+      iex> Qi.Board.diff({nil, nil}, [{5, "K"}])
+      {:error, %ArgumentError{message: "invalid flat index: 5 (board has 2 squares)"}}
+  """
+  @spec diff(tuple(), [{non_neg_integer(), String.t() | nil}]) ::
+          {:ok, tuple(), integer()} | {:error, Exception.t()}
+  def diff(board, changes) do
+    apply_changes(board, changes, tuple_size(board), 0)
+  end
+
+  defp apply_changes(board, [], _total, delta), do: {:ok, board, delta}
+
+  defp apply_changes(board, [{index, piece} | rest], total, delta)
+       when is_integer(index) and index >= 0 and index < total do
+    case validate_piece(piece) do
+      :ok ->
+        old = elem(board, index)
+        new_delta = delta + piece_delta(old, piece)
+        apply_changes(put_elem(board, index, piece), rest, total, new_delta)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp apply_changes(_board, [{index, _} | _], total, _delta) do
+    {:error,
+     %ArgumentError{
+       message: "invalid flat index: #{inspect(index)} (board has #{total} squares)"
+     }}
+  end
+
+  defp validate_piece(nil), do: :ok
+  defp validate_piece(piece) when is_binary(piece), do: :ok
+
+  defp validate_piece(piece) do
+    {:error,
+     %ArgumentError{
+       message: "piece must be a string or nil, got #{inspect(piece)}"
+     }}
+  end
+
+  # Net change: nil→string = +1, string→nil = -1, otherwise 0
+  defp piece_delta(nil, piece) when is_binary(piece), do: 1
+  defp piece_delta(old, nil) when is_binary(old), do: -1
+  defp piece_delta(_, _), do: 0
+
+  # ---------------------------------------------------------------------------
+  # Piece counting
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Counts the number of pieces (non-nil elements) in a board tuple.
+
+  This is an O(n) scan. Prefer tracking the count incrementally via `diff/2`
+  on the hot path.
+
+  ## Examples
+
+      iex> Qi.Board.piece_count({nil, "K", nil, "k"})
+      2
+
+      iex> Qi.Board.piece_count({nil, nil, nil})
+      0
+  """
+  @spec piece_count(tuple()) :: non_neg_integer()
+  def piece_count(board) do
+    do_piece_count(board, 0, tuple_size(board), 0)
+  end
+
+  defp do_piece_count(_board, index, size, acc) when index == size, do: acc
+
+  defp do_piece_count(board, index, size, acc) do
+    case elem(board, index) do
+      nil -> do_piece_count(board, index + 1, size, acc)
+      _ -> do_piece_count(board, index + 1, size, acc + 1)
     end
   end
 
   # ---------------------------------------------------------------------------
-  # Step 4: verify structure and count in a single pass
+  # Nested conversion
   # ---------------------------------------------------------------------------
 
-  # For a 1D shape [n]: single-pass over the rank, verifying all elements are
-  # leaves (not lists) while counting squares and pieces simultaneously.
-  defp verify_and_count(board, [n]) do
-    verify_and_count_rank(board, n, 0, 0)
+  @doc """
+  Converts a flat board tuple into a nested list matching the given shape.
+
+  This is an O(n) operation intended for display or serialization, not for
+  the hot path.
+
+  ## Examples
+
+      iex> Qi.Board.to_nested({"a", "b", "c", "d"}, [2, 2])
+      [["a", "b"], ["c", "d"]]
+
+      iex> Qi.Board.to_nested({"a", "b", "c"}, [3])
+      ["a", "b", "c"]
+
+      iex> Qi.Board.to_nested({nil, nil, nil, nil, nil, nil, nil, nil}, [2, 2, 2])
+      [[[nil, nil], [nil, nil]], [[nil, nil], [nil, nil]]]
+  """
+  @spec to_nested(tuple(), [pos_integer()]) :: list()
+  def to_nested(board, [_]) do
+    Tuple.to_list(board)
   end
 
-  # For a multi-dimensional shape [n | rest]: check length, then recurse
-  # into each sub-array, accumulating counts.
-  defp verify_and_count(board, [n | rest]) do
-    actual = length(board)
-
-    if actual != n do
-      error_non_rectangular(n, actual)
-    else
-      verify_and_count_subs(board, rest, 0, 0)
-    end
+  def to_nested(board, shape) do
+    board
+    |> Tuple.to_list()
+    |> do_nest(shape)
   end
 
-  # -- Rank-level single pass (innermost dimension) --
+  defp do_nest(flat, [_]), do: flat
 
-  defp verify_and_count_rank([], expected, count, pieces) do
-    if count == expected do
-      {:ok, {count, pieces}}
-    else
-      error_non_rectangular(expected, count)
-    end
-  end
+  defp do_nest(flat, [_ | rest]) do
+    chunk_size = Enum.product(rest)
 
-  defp verify_and_count_rank([head | _tail], _expected, _count, _pieces) when is_list(head) do
-    {:error,
-     %ArgumentError{
-       message: "inconsistent board structure: expected flat squares at this level"
-     }}
-  end
-
-  defp verify_and_count_rank([nil | tail], expected, count, pieces) do
-    verify_and_count_rank(tail, expected, count + 1, pieces)
-  end
-
-  defp verify_and_count_rank([_piece | tail], expected, count, pieces) do
-    verify_and_count_rank(tail, expected, count + 1, pieces + 1)
-  end
-
-  # -- Sub-array recursion (outer dimensions) --
-
-  defp verify_and_count_subs([], _shape, sq_acc, pc_acc), do: {:ok, {sq_acc, pc_acc}}
-
-  defp verify_and_count_subs([sub | rest], shape, sq_acc, pc_acc) when is_list(sub) do
-    case verify_and_count(sub, shape) do
-      {:ok, {sq, pc}} -> verify_and_count_subs(rest, shape, sq_acc + sq, pc_acc + pc)
-      error -> error
-    end
-  end
-
-  defp verify_and_count_subs([_non_list | _rest], _shape, _sq_acc, _pc_acc) do
-    {:error,
-     %ArgumentError{
-       message: "inconsistent board structure: mixed lists and non-lists at same level"
-     }}
-  end
-
-  # -- Error helper --
-
-  defp error_non_rectangular(expected, actual) do
-    {:error,
-     %ArgumentError{
-       message: "non-rectangular board: expected #{expected} elements, got #{actual}"
-     }}
+    flat
+    |> Enum.chunk_every(chunk_size)
+    |> Enum.map(&do_nest(&1, rest))
   end
 end

@@ -7,148 +7,113 @@ defmodule Qi.StylesTest do
   # Valid styles
   # ===========================================================================
 
-  describe "validate/1 with valid styles" do
-    test "strings (SIN-like)" do
-      assert :ok = Styles.validate(%{first: "C", second: "c"})
+  describe "validate/2 with valid styles" do
+    test "single-character string, first" do
+      assert :ok = Styles.validate(:first, "C")
     end
 
-    test "single-character strings" do
-      assert :ok = Styles.validate(%{first: "S", second: "s"})
+    test "single-character string, second" do
+      assert :ok = Styles.validate(:second, "c")
     end
 
-    test "atoms" do
-      assert :ok = Styles.validate(%{first: :chess, second: :shogi})
+    test "multi-character string" do
+      assert :ok = Styles.validate(:first, "chess")
+    end
+
+    test "namespaced style" do
+      assert :ok = Styles.validate(:first, "Chess960")
+    end
+
+    test "empty string" do
+      assert :ok = Styles.validate(:first, "")
     end
 
     test "same style for both sides" do
-      assert :ok = Styles.validate(%{first: :chess, second: :chess})
-    end
-
-    test "tuples" do
-      assert :ok =
-               Styles.validate(%{
-                 first: {:variant, "Chess960"},
-                 second: {:variant, "Chess960"}
-               })
-    end
-
-    test "integers" do
-      assert :ok = Styles.validate(%{first: 1, second: 2})
-    end
-
-    test "booleans (non-nil terms)" do
-      assert :ok = Styles.validate(%{first: true, second: false})
-    end
-
-    test "mixed types" do
-      assert :ok = Styles.validate(%{first: "C", second: :shogi})
-    end
-
-    test "empty strings (non-nil)" do
-      assert :ok = Styles.validate(%{first: "", second: ""})
-    end
-
-    test "empty lists (non-nil)" do
-      assert :ok = Styles.validate(%{first: [], second: []})
+      assert :ok = Styles.validate(:first, "C")
+      assert :ok = Styles.validate(:second, "C")
     end
   end
 
   # ===========================================================================
-  # Invalid styles — nil values
+  # Invalid styles — nil
   # ===========================================================================
 
-  describe "validate/1 rejects nil style values" do
-    test "first is nil" do
+  describe "validate/2 rejects nil" do
+    test "first player" do
       assert {:error, %ArgumentError{message: "first player style must not be nil"}} =
-               Styles.validate(%{first: nil, second: "c"})
+               Styles.validate(:first, nil)
     end
 
-    test "second is nil" do
+    test "second player" do
       assert {:error, %ArgumentError{message: "second player style must not be nil"}} =
-               Styles.validate(%{first: "C", second: nil})
-    end
-
-    test "both are nil (first detected first)" do
-      assert {:error, %ArgumentError{message: "first player style must not be nil"}} =
-               Styles.validate(%{first: nil, second: nil})
+               Styles.validate(:second, nil)
     end
   end
 
   # ===========================================================================
-  # Invalid styles — wrong keys
+  # Invalid styles — non-string types
   # ===========================================================================
 
-  describe "validate/1 rejects maps with wrong keys" do
-    test "missing :second" do
-      assert {:error, %ArgumentError{message: "styles must have exactly keys :first and :second"}} =
-               Styles.validate(%{first: "C"})
+  describe "validate/2 rejects non-string types" do
+    test "atom, first" do
+      assert {:error, %ArgumentError{message: "first player style must be a String"}} =
+               Styles.validate(:first, :chess)
     end
 
-    test "missing :first" do
-      assert {:error, %ArgumentError{message: "styles must have exactly keys :first and :second"}} =
-               Styles.validate(%{second: "c"})
-    end
-
-    test "extra key" do
-      assert {:error, %ArgumentError{message: "styles must have exactly keys :first and :second"}} =
-               Styles.validate(%{first: "C", second: "c", third: "x"})
-    end
-
-    test "completely wrong keys" do
-      assert {:error, %ArgumentError{message: "styles must have exactly keys :first and :second"}} =
-               Styles.validate(%{a: "C", b: "c"})
-    end
-
-    test "empty map" do
-      assert {:error, %ArgumentError{message: "styles must have exactly keys :first and :second"}} =
-               Styles.validate(%{})
-    end
-
-    test "string keys instead of atoms" do
-      assert {:error, %ArgumentError{message: "styles must have exactly keys :first and :second"}} =
-               Styles.validate(%{"first" => "C", "second" => "c"})
-    end
-  end
-
-  # ===========================================================================
-  # Invalid styles — not a map
-  # ===========================================================================
-
-  describe "validate/1 rejects non-map input" do
-    test "atom" do
-      assert {:error,
-              %ArgumentError{message: "styles must be a map with keys :first and :second"}} =
-               Styles.validate(:not_a_map)
-    end
-
-    test "string" do
-      assert {:error,
-              %ArgumentError{message: "styles must be a map with keys :first and :second"}} =
-               Styles.validate("not a map")
-    end
-
-    test "list" do
-      assert {:error,
-              %ArgumentError{message: "styles must be a map with keys :first and :second"}} =
-               Styles.validate(["C", "c"])
-    end
-
-    test "nil" do
-      assert {:error,
-              %ArgumentError{message: "styles must be a map with keys :first and :second"}} =
-               Styles.validate(nil)
+    test "atom, second" do
+      assert {:error, %ArgumentError{message: "second player style must be a String"}} =
+               Styles.validate(:second, :shogi)
     end
 
     test "integer" do
-      assert {:error,
-              %ArgumentError{message: "styles must be a map with keys :first and :second"}} =
-               Styles.validate(42)
+      assert {:error, %ArgumentError{message: "first player style must be a String"}} =
+               Styles.validate(:first, 1)
+    end
+
+    test "boolean" do
+      assert {:error, %ArgumentError{message: "first player style must be a String"}} =
+               Styles.validate(:first, true)
+    end
+
+    test "list" do
+      assert {:error, %ArgumentError{message: "second player style must be a String"}} =
+               Styles.validate(:second, ["C"])
     end
 
     test "tuple" do
-      assert {:error,
-              %ArgumentError{message: "styles must be a map with keys :first and :second"}} =
-               Styles.validate({"C", "c"})
+      assert {:error, %ArgumentError{message: "first player style must be a String"}} =
+               Styles.validate(:first, {:variant, "Chess960"})
+    end
+
+    test "map" do
+      assert {:error, %ArgumentError{message: "second player style must be a String"}} =
+               Styles.validate(:second, %{name: "chess"})
+    end
+  end
+
+  # ===========================================================================
+  # Error message includes correct side
+  # ===========================================================================
+
+  describe "validate/2 error messages use correct side" do
+    test "nil error for first" do
+      {:error, %ArgumentError{message: msg}} = Styles.validate(:first, nil)
+      assert msg =~ "first"
+    end
+
+    test "nil error for second" do
+      {:error, %ArgumentError{message: msg}} = Styles.validate(:second, nil)
+      assert msg =~ "second"
+    end
+
+    test "type error for first" do
+      {:error, %ArgumentError{message: msg}} = Styles.validate(:first, 42)
+      assert msg =~ "first"
+    end
+
+    test "type error for second" do
+      {:error, %ArgumentError{message: msg}} = Styles.validate(:second, 42)
+      assert msg =~ "second"
     end
   end
 end

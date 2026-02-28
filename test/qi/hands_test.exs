@@ -4,193 +4,230 @@ defmodule Qi.HandsTest do
   alias Qi.Hands
 
   # ===========================================================================
-  # Valid hands — counting
+  # new/0
   # ===========================================================================
 
-  describe "validate/1 with valid hands" do
-    test "both empty" do
-      assert {:ok, 0} = Hands.validate(%{first: [], second: []})
-    end
-
-    test "first has pieces, second empty" do
-      assert {:ok, 2} = Hands.validate(%{first: [:P, :B], second: []})
-    end
-
-    test "second has pieces, first empty" do
-      assert {:ok, 3} = Hands.validate(%{first: [], second: [:p, :p, :b]})
-    end
-
-    test "both have pieces" do
-      assert {:ok, 5} = Hands.validate(%{first: [:P, :P, :B], second: [:p, :b]})
-    end
-
-    test "single piece in each hand" do
-      assert {:ok, 2} = Hands.validate(%{first: [:R], second: [:r]})
-    end
-
-    test "duplicate pieces in same hand" do
-      assert {:ok, 4} = Hands.validate(%{first: [:P, :P, :P, :P], second: []})
-    end
-
-    test "pieces as strings (EPIN-like)" do
-      assert {:ok, 3} = Hands.validate(%{first: ["+P", "+P"], second: ["b"]})
-    end
-
-    test "pieces as tuples" do
-      assert {:ok, 2} =
-               Hands.validate(%{
-                 first: [{:pawn, :first}],
-                 second: [{:bishop, :second}]
-               })
-    end
-
-    test "pieces as integers" do
-      assert {:ok, 3} = Hands.validate(%{first: [1, 2], second: [3]})
-    end
-
-    test "mixed piece types in same hand" do
-      assert {:ok, 3} = Hands.validate(%{first: [:P, "P", {:pawn, :first}], second: []})
-    end
-
-    test "large hands" do
-      first = List.duplicate(:P, 100)
-      second = List.duplicate(:p, 100)
-      assert {:ok, 200} = Hands.validate(%{first: first, second: second})
+  describe "new/0" do
+    test "returns an empty map" do
+      assert Hands.new() == %{}
     end
   end
 
   # ===========================================================================
-  # Invalid hands — shape (not a map / wrong keys)
+  # diff/2 — adding pieces
   # ===========================================================================
 
-  describe "validate/1 rejects non-map input" do
-    test "atom" do
-      assert {:error, %ArgumentError{message: "hands must be a map with keys :first and :second"}} =
-               Hands.validate(:not_a_map)
+  describe "diff/2 adding pieces" do
+    test "add one piece to empty hand" do
+      assert {:ok, %{"P" => 1}, 1} = Hands.diff(%{}, [{"P", 1}])
     end
 
-    test "string" do
-      assert {:error, %ArgumentError{message: "hands must be a map with keys :first and :second"}} =
-               Hands.validate("not a map")
+    test "add multiple copies of one piece" do
+      assert {:ok, %{"P" => 3}, 3} = Hands.diff(%{}, [{"P", 3}])
     end
 
-    test "list" do
-      assert {:error, %ArgumentError{message: "hands must be a map with keys :first and :second"}} =
-               Hands.validate([[], []])
+    test "add different pieces" do
+      assert {:ok, hand, 3} = Hands.diff(%{}, [{"P", 2}, {"B", 1}])
+      assert hand == %{"P" => 2, "B" => 1}
     end
 
-    test "nil" do
-      assert {:error, %ArgumentError{message: "hands must be a map with keys :first and :second"}} =
-               Hands.validate(nil)
+    test "add to existing pieces" do
+      assert {:ok, %{"P" => 3}, 2} = Hands.diff(%{"P" => 1}, [{"P", 2}])
     end
 
-    test "integer" do
-      assert {:error, %ArgumentError{message: "hands must be a map with keys :first and :second"}} =
-               Hands.validate(42)
-    end
-  end
-
-  describe "validate/1 rejects maps with wrong keys" do
-    test "missing :second" do
-      assert {:error, %ArgumentError{message: "hands must have exactly keys :first and :second"}} =
-               Hands.validate(%{first: []})
+    test "add new piece type to non-empty hand" do
+      assert {:ok, hand, 1} = Hands.diff(%{"P" => 2}, [{"B", 1}])
+      assert hand == %{"P" => 2, "B" => 1}
     end
 
-    test "missing :first" do
-      assert {:error, %ArgumentError{message: "hands must have exactly keys :first and :second"}} =
-               Hands.validate(%{second: []})
-    end
-
-    test "extra key" do
-      assert {:error, %ArgumentError{message: "hands must have exactly keys :first and :second"}} =
-               Hands.validate(%{first: [], second: [], third: []})
-    end
-
-    test "completely wrong keys" do
-      assert {:error, %ArgumentError{message: "hands must have exactly keys :first and :second"}} =
-               Hands.validate(%{a: [], b: []})
-    end
-
-    test "empty map" do
-      assert {:error, %ArgumentError{message: "hands must have exactly keys :first and :second"}} =
-               Hands.validate(%{})
-    end
-
-    test "string keys instead of atoms" do
-      assert {:error, %ArgumentError{message: "hands must have exactly keys :first and :second"}} =
-               Hands.validate(%{"first" => [], "second" => []})
+    test "pieces with special characters" do
+      assert {:ok, hand, 2} = Hands.diff(%{}, [{"+P", 1}, {"C:B", 1}])
+      assert hand == %{"+P" => 1, "C:B" => 1}
     end
   end
 
   # ===========================================================================
-  # Invalid hands — values not lists
+  # diff/2 — removing pieces
   # ===========================================================================
 
-  describe "validate/1 rejects non-list hand values" do
-    test "first hand is not a list" do
-      assert {:error, %ArgumentError{message: "each hand must be a list"}} =
-               Hands.validate(%{first: :not_list, second: []})
+  describe "diff/2 removing pieces" do
+    test "remove one copy, some remain" do
+      assert {:ok, %{"P" => 1}, -1} = Hands.diff(%{"P" => 2}, [{"P", -1}])
     end
 
-    test "second hand is not a list" do
-      assert {:error, %ArgumentError{message: "each hand must be a list"}} =
-               Hands.validate(%{first: [], second: :not_list})
+    test "remove all copies (entry deleted)" do
+      assert {:ok, hand, -1} = Hands.diff(%{"P" => 1}, [{"P", -1}])
+      assert hand == %{}
     end
 
-    test "both hands are not lists" do
-      assert {:error, %ArgumentError{message: "each hand must be a list"}} =
-               Hands.validate(%{first: :a, second: :b})
+    test "remove all copies of one piece, keep others" do
+      assert {:ok, hand, -2} = Hands.diff(%{"P" => 2, "B" => 1}, [{"P", -2}])
+      assert hand == %{"B" => 1}
     end
 
-    test "hand value is a string" do
-      assert {:error, %ArgumentError{message: "each hand must be a list"}} =
-               Hands.validate(%{first: "P,B", second: []})
-    end
-
-    test "hand value is nil" do
-      assert {:error, %ArgumentError{message: "each hand must be a list"}} =
-               Hands.validate(%{first: nil, second: []})
-    end
-
-    test "hand value is an integer" do
-      assert {:error, %ArgumentError{message: "each hand must be a list"}} =
-               Hands.validate(%{first: [], second: 3})
+    test "remove multiple piece types" do
+      hand = %{"P" => 3, "B" => 1, "N" => 2}
+      assert {:ok, new_hand, -3} = Hands.diff(hand, [{"P", -1}, {"B", -1}, {"N", -1}])
+      assert new_hand == %{"P" => 2, "N" => 1}
     end
   end
 
   # ===========================================================================
-  # Invalid hands — nil pieces
+  # diff/2 — mixed add and remove
   # ===========================================================================
 
-  describe "validate/1 rejects nil pieces" do
-    test "nil in first hand" do
-      assert {:error, %ArgumentError{message: "hand pieces must not be nil"}} =
-               Hands.validate(%{first: [nil], second: []})
+  describe "diff/2 mixed operations" do
+    test "add one, remove another" do
+      assert {:ok, hand, 0} = Hands.diff(%{"B" => 1}, [{"B", -1}, {"P", 1}])
+      assert hand == %{"P" => 1}
     end
 
-    test "nil in second hand" do
-      assert {:error, %ArgumentError{message: "hand pieces must not be nil"}} =
-               Hands.validate(%{first: [], second: [nil]})
+    test "net positive delta" do
+      assert {:ok, hand, 1} = Hands.diff(%{"P" => 1}, [{"P", -1}, {"B", 1}, {"N", 1}])
+      assert hand == %{"B" => 1, "N" => 1}
     end
 
-    test "nil among other pieces in first hand" do
-      assert {:error, %ArgumentError{message: "hand pieces must not be nil"}} =
-               Hands.validate(%{first: [:P, nil, :B], second: []})
+    test "net negative delta" do
+      assert {:ok, hand, -2} = Hands.diff(%{"P" => 2, "B" => 1}, [{"P", -2}, {"B", -1}, {"N", 1}])
+      assert hand == %{"N" => 1}
+    end
+  end
+
+  # ===========================================================================
+  # diff/2 — zero delta (no-op)
+  # ===========================================================================
+
+  describe "diff/2 zero delta" do
+    test "zero delta on empty hand" do
+      assert {:ok, %{}, 0} = Hands.diff(%{}, [{"P", 0}])
     end
 
-    test "nil among other pieces in second hand" do
-      assert {:error, %ArgumentError{message: "hand pieces must not be nil"}} =
-               Hands.validate(%{first: [], second: [:p, nil]})
+    test "zero delta on non-empty hand" do
+      assert {:ok, %{"P" => 2}, 0} = Hands.diff(%{"P" => 2}, [{"P", 0}])
     end
 
-    test "nil at end of first hand" do
-      assert {:error, %ArgumentError{message: "hand pieces must not be nil"}} =
-               Hands.validate(%{first: [:P, :B, nil], second: []})
+    test "zero delta for absent piece" do
+      assert {:ok, %{}, 0} = Hands.diff(%{}, [{"X", 0}])
     end
 
-    test "nil in both hands (first detected first)" do
-      assert {:error, %ArgumentError{message: "hand pieces must not be nil"}} =
-               Hands.validate(%{first: [nil], second: [nil]})
+    test "empty changes list" do
+      assert {:ok, %{"P" => 1}, 0} = Hands.diff(%{"P" => 1}, [])
+    end
+
+    test "empty changes on empty hand" do
+      assert {:ok, %{}, 0} = Hands.diff(%{}, [])
+    end
+  end
+
+  # ===========================================================================
+  # diff/2 — does not modify original
+  # ===========================================================================
+
+  describe "diff/2 immutability" do
+    test "original hand is unchanged" do
+      original = %{"P" => 1}
+      {:ok, _new, _delta} = Hands.diff(original, [{"P", 1}])
+      assert original == %{"P" => 1}
+    end
+  end
+
+  # ===========================================================================
+  # diff/2 — error: removing more than present
+  # ===========================================================================
+
+  describe "diff/2 rejects removing more pieces than present" do
+    test "remove from empty hand" do
+      assert {:error, %ArgumentError{message: "cannot remove P: not found in hand"}} =
+               Hands.diff(%{}, [{"P", -1}])
+    end
+
+    test "remove more than available" do
+      assert {:error, %ArgumentError{message: "cannot remove P: not found in hand"}} =
+               Hands.diff(%{"P" => 1}, [{"P", -2}])
+    end
+
+    test "remove piece not in hand" do
+      assert {:error, %ArgumentError{message: "cannot remove B: not found in hand"}} =
+               Hands.diff(%{"P" => 1}, [{"B", -1}])
+    end
+
+    test "valid change before invalid removal" do
+      assert {:error, %ArgumentError{message: "cannot remove B: not found in hand"}} =
+               Hands.diff(%{}, [{"P", 1}, {"B", -1}])
+    end
+  end
+
+  # ===========================================================================
+  # diff/2 — error: non-integer delta
+  # ===========================================================================
+
+  describe "diff/2 rejects non-integer deltas" do
+    test "atom delta" do
+      assert {:error, %ArgumentError{message: "delta must be an integer, got :one for piece P"}} =
+               Hands.diff(%{}, [{"P", :one}])
+    end
+
+    test "float delta" do
+      assert {:error, %ArgumentError{message: "delta must be an integer, got 1.0 for piece P"}} =
+               Hands.diff(%{}, [{"P", 1.0}])
+    end
+
+    test "string delta" do
+      assert {:error, %ArgumentError{message: "delta must be an integer, got \"1\" for piece P"}} =
+               Hands.diff(%{}, [{"P", "1"}])
+    end
+
+    test "nil delta" do
+      assert {:error, %ArgumentError{message: "delta must be an integer, got nil for piece P"}} =
+               Hands.diff(%{}, [{"P", nil}])
+    end
+  end
+
+  # ===========================================================================
+  # diff/2 — error: non-string piece
+  # ===========================================================================
+
+  describe "diff/2 rejects non-string pieces" do
+    test "atom piece" do
+      assert {:error, %ArgumentError{message: "piece must be a string, got :P"}} =
+               Hands.diff(%{}, [{:P, 1}])
+    end
+
+    test "integer piece" do
+      assert {:error, %ArgumentError{message: "piece must be a string, got 1"}} =
+               Hands.diff(%{}, [{1, 1}])
+    end
+
+    test "nil piece" do
+      assert {:error, %ArgumentError{message: "piece must be a string, got nil"}} =
+               Hands.diff(%{}, [{nil, 1}])
+    end
+
+    test "tuple piece" do
+      assert {:error, %ArgumentError{message: "piece must be a string, got {:pawn, :first}"}} =
+               Hands.diff(%{}, [{{:pawn, :first}, 1}])
+    end
+  end
+
+  # ===========================================================================
+  # piece_count/1
+  # ===========================================================================
+
+  describe "piece_count/1" do
+    test "empty hand" do
+      assert Hands.piece_count(%{}) == 0
+    end
+
+    test "single piece type" do
+      assert Hands.piece_count(%{"P" => 3}) == 3
+    end
+
+    test "multiple piece types" do
+      assert Hands.piece_count(%{"P" => 3, "B" => 1, "N" => 2}) == 6
+    end
+
+    test "one of each" do
+      assert Hands.piece_count(%{"P" => 1, "B" => 1}) == 2
     end
   end
 end

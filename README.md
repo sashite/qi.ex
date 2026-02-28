@@ -1,188 +1,348 @@
 # qi.ex
 
 [![Hex Version](https://img.shields.io/hexpm/v/qi.svg)](https://hex.pm/packages/qi)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/qi/)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/qi)
 [![CI](https://github.com/sashite/qi.ex/actions/workflows/elixir.yml/badge.svg?branch=main)](https://github.com/sashite/qi.ex/actions)
-[![License](https://img.shields.io/hexpm/l/qi.svg)](https://github.com/sashite/qi.ex/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/sashite/qi.ex/blob/main/LICENSE)
 
-> A minimal, format-agnostic position model for two-player board games.
+> An immutable, format-agnostic position model for two-player board games.
+
+## Quick Start
+
+```elixir
+# Create an empty 8×8 board — "C" and "c" are style identifiers
+# (here: Chess uppercase vs Chess lowercase)
+pos = Qi.new([8, 8], first_player_style: "C", second_player_style: "c")
+
+# Place some pieces using flat indices (row-major order)
+pos2 =
+  pos
+  |> Qi.board_diff([{4, "K"}, {60, "k"}])   # kings on their starting squares
+  |> Qi.board_diff([{0, "R"}, {63, "r"}])    # rooks in the corners
+  |> Qi.toggle()                              # switch turn to second player
+
+pos2.turn              #=> :second
+elem(pos2.board, 4)    #=> "K"
+elem(pos2.board, 60)   #=> "k"
+```
+
+Every transformation returns a **new struct**. The original is never modified.
 
 ## Overview
 
-`Qi` provides an immutable `Qi.Position` struct that represents the state of a two-player, turn-based board game as defined by the [Sashité Game Protocol](https://sashite.dev/game-protocol/).
+`Qi` models a board game position as defined by the [Sashité Game Protocol](https://sashite.dev/game-protocol/). A position encodes exactly four things:
 
-A position encodes exactly four things:
+| Component | Fields | Description |
+|-----------|--------|-------------|
+| Board | `board` | Flat tuple of squares, indexed in row-major order |
+| Hands | `first_player_hand`, `second_player_hand` | Off-board pieces held by each player |
+| Styles | `first_player_style`, `second_player_style` | One style string per player side |
+| Turn | `turn` | The active player (`:first` or `:second`) |
 
-| Field    | Type                              | Description                                        |
-|----------|-----------------------------------|----------------------------------------------------|
-| `board`  | nested list (1D to 3D)            | Board structure and occupancy                      |
-| `hands`  | `%{first: list, second: list}`    | Off-board pieces held by each player               |
-| `styles` | `%{first: term, second: term}`    | Player style for each side                         |
-| `turn`   | `:first` or `:second`             | The active player's side                           |
+**Pieces and styles are strings.** Every piece — whether on the board or in a hand — and every style value is stored as a `String`. This aligns naturally with the notation formats in the Sashité ecosystem ([FEEN](https://sashite.dev/specs/feen/1.0.0/), [EPIN](https://sashite.dev/specs/epin/1.0.0/), [PON](https://sashite.dev/specs/pon/1.0.0/), [SIN](https://sashite.dev/specs/sin/1.0.0/)), which all produce string representations. Empty squares are represented by `nil`.
 
-Piece and style representations are **intentionally opaque** — `Qi` validates structure, not semantics. This makes the library reusable across [FEEN](https://sashite.dev/specs/feen/1.0.0/), [PON](https://sashite.dev/specs/pon/1.0.0/), or any other encoding that shares the same positional model.
+**Strings required.** Pieces and styles must be strings (`String.t()`). Non-string values are rejected with an `ArgumentError`. This avoids per-operation coercion overhead on the hot path.
 
-### Implementation Constraints
-
-| Constraint         | Value | Rationale                                 |
-|--------------------|-------|-------------------------------------------|
-| Max dimensions     | 3     | Covers 1D, 2D, 3D boards                 |
-| Max dimension size | 255   | Fits in 8-bit integer; covers 255×255×255 |
-| Board non-empty    | n ≥ 1 | A board must contain at least one square  |
-| Piece cardinality  | p ≤ n | Pieces cannot exceed the number of squares|
+```elixir
+pos |> Qi.board_diff([{0, "K"}])         # String — stored as "K"
+pos |> Qi.board_diff([{0, "C:K"}])       # Namespaced — stored as "C:K"
+pos |> Qi.board_diff([{0, "+P"}])        # Promoted — stored as "+P"
+```
 
 ## Installation
 
 ```elixir
-# In your mix.exs
+# In mix.exs
 def deps do
-  [
-    {:qi, "~> 1.0"}
-  ]
+  [{:qi, "~> 2.0"}]
 end
 ```
 
-## Dependencies
+Then run:
 
-None. `Qi` is a zero-dependency library.
-
-## Usage
-
-### Creating a Position
-
-```elixir
-# Chess starting position
-board = [
-  [:r, :n, :b, :q, :k, :b, :n, :r],
-  [:p, :p, :p, :p, :p, :p, :p, :p],
-  [nil, nil, nil, nil, nil, nil, nil, nil],
-  [nil, nil, nil, nil, nil, nil, nil, nil],
-  [nil, nil, nil, nil, nil, nil, nil, nil],
-  [nil, nil, nil, nil, nil, nil, nil, nil],
-  [:P, :P, :P, :P, :P, :P, :P, :P],
-  [:R, :N, :B, :Q, :K, :B, :N, :R]
-]
-
-{:ok, position} = Qi.new(
-  board,
-  %{first: [], second: []},
-  %{first: "C", second: "c"},
-  :first
-)
+```sh
+mix deps.get
 ```
 
-### Accessing Fields
+### Requirements
+
+`Qi` requires **Elixir 1.14+** / **OTP 25+** (tested against Elixir 1.14 through 1.19 and OTP 25 through 28) and has **zero runtime dependencies**.
+
+## API Reference
+
+### Construction
+
+#### `Qi.new(shape, opts)` → `%Qi{}`
+
+Creates a position with an empty board.
+
+**Parameters:**
+
+- `shape` — a list of one to three integer dimension sizes (each 1–255).
+- `:first_player_style` — style for the first player (non-nil string).
+- `:second_player_style` — style for the second player (non-nil string).
+
+The board starts with all squares empty (`nil`), both hands start empty, and the turn defaults to `:first`.
 
 ```elixir
-position.board   #=> [[:r, :n, :b, ...], ...]
-position.hands   #=> %{first: [], second: []}
-position.styles  #=> %{first: "C", second: "c"}
-position.turn    #=> :first
+Qi.new([8, 8], first_player_style: "C", second_player_style: "c")       # 2D (8×8)
+Qi.new([8], first_player_style: "G", second_player_style: "g")          # 1D
+Qi.new([5, 5, 5], first_player_style: "R", second_player_style: "r")   # 3D
 ```
 
-### Bang Variant
+**Raises** `ArgumentError` if shape constraints are violated or if a style is `nil` (see [Validation Errors](#validation-errors)).
+
+### Constants
+
+| Function | Value | Description |
+|----------|-------|-------------|
+| `Qi.max_dimensions()` | `3` | Maximum number of board dimensions |
+| `Qi.max_dimension_size()` | `255` | Maximum size of any single dimension |
+
+### Accessors
+
+All fields are accessible directly on the struct.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `board` | `tuple()` | Flat tuple of `nil` or `String.t()`. Indexed in row-major order. |
+| `first_player_hand` | `%{String.t() => pos_integer()}` | First player's held pieces as piece → count map. |
+| `second_player_hand` | `%{String.t() => pos_integer()}` | Second player's held pieces as piece → count map. |
+| `turn` | `:first \| :second` | The active player. |
+| `first_player_style` | `String.t()` | First player's style. |
+| `second_player_style` | `String.t()` | Second player's style. |
+| `shape` | `[pos_integer()]` | Board dimensions (e.g., `[8, 8]`). |
 
 ```elixir
-# Raises ArgumentError on invalid input
-position = Qi.new!(board, hands, styles, :first)
+pos.board                #=> {nil, "r", "n", "b", "q", "k", nil, nil, ...}
+pos.first_player_hand    #=> %{}
+pos.second_player_hand   #=> %{}
+pos.turn                 #=> :first
+pos.first_player_style   #=> "C"
+pos.second_player_style  #=> "c"
+pos.shape                #=> [8, 8]
 ```
 
-### Tagged Tuple Variant
+**Board as nested list.** Use `Qi.to_nested/1` to convert the flat tuple into a nested list matching the shape. This is an O(n) operation intended for display or serialization, not for the hot path.
 
 ```elixir
-# Returns {:ok, position} or {:error, %ArgumentError{}}
-case Qi.new(board, hands, styles, :first) do
-  {:ok, position} -> position
-  {:error, error} -> handle_error(error)
-end
+Qi.to_nested(pos)  #=> [["r", "n", "b", ...], ...]
 ```
 
-### Pieces as Arbitrary Terms
+### Transformations
 
-Pieces are not restricted to any specific format. You can use atoms, strings (EPIN tokens), tuples, or any non-nil Elixir term:
+All transformation functions return a **new `%Qi{}` struct**. The original is never modified.
+
+#### `Qi.board_diff(qi, changes)` → `%Qi{}`
+
+Returns a new position with modified squares.
+
+Accepts a list of `{flat_index, piece}` tuples where each flat index is a 0-based integer in row-major order, and each piece is a string or `nil` (empty square).
 
 ```elixir
-# Atoms
-Qi.new!([:k, :p, nil, :P, :K], %{first: [], second: []}, %{first: "C", second: "c"}, :first)
-
-# EPIN strings
-Qi.new!([["K^", nil], [nil, "k^"]], %{first: [], second: []}, %{first: "C", second: "c"}, :first)
-
-# Tuples
-Qi.new!(
-  [[{:king, :first, true}, nil], [nil, {:king, :second, true}]],
-  %{first: [], second: []},
-  %{first: :chess, second: :chess},
-  :first
-)
+pos2 = Qi.board_diff(pos, [{12, nil}, {28, "P"}])
 ```
 
-### Multi-dimensional Boards
+**Raises** `ArgumentError` if an index is out of range or if the resulting total piece count exceeds the board size.
+
+See [Flat Indexing](#flat-indexing) for computing flat indices from coordinates.
+
+#### `Qi.first_player_hand_diff(qi, changes)` → `%Qi{}`
+#### `Qi.second_player_hand_diff(qi, changes)` → `%Qi{}`
+
+Returns a new position with a modified hand.
+
+Accepts a list of `{piece, delta}` tuples where each piece is a string and each delta is an integer (positive to add, negative to remove, zero is a no-op).
 
 ```elixir
-# 1D board
-Qi.new!([:a, nil, :b], %{first: [], second: []}, %{first: "G", second: "g"}, :first)
-
-# 2D board (standard)
-Qi.new!([[nil, nil], [nil, nil]], %{first: [], second: []}, %{first: "C", second: "c"}, :first)
-
-# 3D board (2 layers × 2 ranks × 2 files)
-board_3d = [
-  [[:a, :b], [:c, :d]],
-  [[:A, :B], [:C, :D]]
-]
-Qi.new!(board_3d, %{first: [], second: []}, %{first: "R", second: "r"}, :first)
+pos2 = Qi.first_player_hand_diff(pos, [{"P", 1}])               # Add one "P"
+pos3 = Qi.first_player_hand_diff(pos, [{"B", -1}, {"P", 1}])    # Remove one "B", add one "P"
+pos4 = Qi.second_player_hand_diff(pos, [{"p", 1}])              # Add one "p" to second hand
 ```
 
-### Hands with Captured Pieces
+Internally, hands are stored as `%{piece => count}` maps. Adding and removing pieces is O(1) per entry.
+
+**Raises** `ArgumentError` if a delta is not an integer, if removing a piece not present, or if the resulting total piece count exceeds the board size.
+
+#### `Qi.toggle(qi)` → `%Qi{}`
+
+Returns a new position with the active player swapped. All other fields are preserved.
 
 ```elixir
-# Shogi-like position with pieces in hand
-Qi.new!(
-  [[nil, nil, nil], [nil, "K^", nil], [nil, nil, nil]],
-  %{first: ["P", "P", "B"], second: ["p"]},
-  %{first: "S", second: "s"},
-  :first
-)
+pos.turn                #=> :first
+Qi.toggle(pos).turn     #=> :second
+```
+
+#### Piping
+
+Transformations compose naturally with the pipe operator. A typical move involves modifying the board, optionally updating a hand, and toggling the turn:
+
+```elixir
+# Simple move: slide a piece from index 12 to index 28
+pos2 =
+  pos
+  |> Qi.board_diff([{12, nil}, {28, "P"}])
+  |> Qi.toggle()
+
+# Capture: overwrite defender, add captured piece to hand, toggle
+pos3 =
+  pos
+  |> Qi.board_diff([{12, nil}, {28, "P"}])
+  |> Qi.first_player_hand_diff([{"p", 1}])
+  |> Qi.toggle()
+```
+
+The Protocol does not prescribe how captures are modeled. In the example above, `board_diff` simultaneously vacates the source and overwrites the destination. The captured piece must be added to the hand separately — `board_diff` does not track what was previously on a square.
+
+## Board Structure
+
+### Shape and Dimensionality
+
+The `board` field is always a flat tuple. Use `Qi.to_nested/1` when a nested structure is needed:
+
+| Dimensionality | Constructor | `Qi.to_nested/1` returns |
+|----------------|-------------|--------------------------|
+| 1D | `Qi.new([8], ...)` | `[square, square, ...]` |
+| 2D | `Qi.new([8, 8], ...)` | `[[square, ...], [square, ...], ...]` |
+| 3D | `Qi.new([5, 5, 5], ...)` | `[[[square, ...], ...], ...]` |
+
+Each `square` is either `nil` (empty) or a string (a piece).
+
+For a shape `[d1, d2, ..., dn]`, the total number of squares is `d1 × d2 × ... × dn`.
+
+### Flat Indexing
+
+`board_diff` addresses squares by **flat index** — a single integer in **row-major order** (C order). Individual squares can also be read directly from the board tuple via `elem(pos.board, index)`.
+
+**1D board** with shape `[f]`:
+
+```
+flat_index = f
+```
+
+**2D board** with shape `[r, f]` (r ranks, f files):
+
+```
+flat_index = r × F + f
+```
+
+For example, on a 3×3 board (shape `[3, 3]`):
+
+```
+             file
+           0   1   2
+        ┌────┬────┬────┐
+rank 0  │  0 │  1 │  2 │
+        ├────┼────┼────┤
+rank 1  │  3 │  4 │  5 │
+        ├────┼────┼────┤
+rank 2  │  6 │  7 │  8 │
+        └────┴────┴────┘
+```
+
+Square `(rank=1, file=2)` → flat index `1 × 3 + 2 = 5`.
+
+**3D board** with shape `[l, r, f]` (l layers, r ranks, f files):
+
+```
+flat_index = l × R × F + r × F + f
+```
+
+### Piece Cardinality
+
+The total number of pieces across all locations (board squares + both hands) must never exceed the number of squares on the board. This invariant is enforced on every transformation.
+
+For a board with *n* squares and *p* total pieces: **0 ≤ p ≤ n**.
+
+```elixir
+pos =
+  Qi.new([2], first_player_style: "C", second_player_style: "c")
+  |> Qi.board_diff([{0, "a"}, {1, "b"}])   # 2 pieces on 2 squares: OK
+
+Qi.first_player_hand_diff(pos, [{"c", 1}])
+# ** (ArgumentError) too many pieces for board size (3 pieces, 2 squares)
 ```
 
 ## Validation Errors
 
-| Error message                          | Cause                                    |
-|----------------------------------------|------------------------------------------|
-| `"board must be a list"`               | Board is not a list                      |
-| `"board must not be empty"`            | Board is `[]`                            |
-| `"board exceeds 3 dimensions (got N)"` | More than 3 nesting levels              |
-| `"dimension size N exceeds maximum of 255"` | A dimension has more than 255 elements |
-| `"non-rectangular board: ..."`         | Sub-arrays at the same level differ in length |
-| `"inconsistent board structure: mixed lists and non-lists at same level"` | Mixed lists and non-lists at the same nesting level |
-| `"inconsistent board structure: expected flat squares at this level"` | A list found where a leaf square was expected |
-| `"hands must be a map with keys :first and :second"` | Hands is not a map |
-| `"hands must have exactly keys :first and :second"` | Map has missing or extra keys |
-| `"each hand must be a list"`           | Hand value is not a list                 |
-| `"hand pieces must not be nil"`        | `nil` found in a hand list               |
-| `"styles must be a map with keys :first and :second"` | Styles is not a map |
-| `"styles must have exactly keys :first and :second"` | Map has missing or extra keys |
-| `"first player style must not be nil"` | First style value is `nil`               |
-| `"second player style must not be nil"` | Second style value is `nil`             |
-| `"turn must be :first or :second"`     | Invalid turn value                       |
-| `"too many pieces for board size (P pieces, N squares)"` | Piece cardinality violation |
+### Validation Order
+
+Construction validates fields in a guaranteed order. When multiple errors exist, the **first** failing check determines the error message:
+
+1. **Shape** — dimension count, types, and bounds
+2. **Styles** — nil checks (first, then second)
+
+This order is part of the public API contract.
+
+### Construction Errors
+
+| Error message | Cause |
+|---------------|-------|
+| `"at least one dimension is required"` | Empty shape list |
+| `"board exceeds 3 dimensions (got N)"` | More than 3 dimension sizes |
+| `"dimension size must be an integer, got T"` | Non-integer dimension size |
+| `"dimension size must be at least 1, got N"` | Dimension size is zero or negative |
+| `"dimension size N exceeds maximum of 255"` | Dimension size exceeds 255 |
+| `"first player style must not be nil"` | First style is `nil` |
+| `"second player style must not be nil"` | Second style is `nil` |
+
+### Transformation Errors
+
+| Error message | Function | Cause |
+|---------------|----------|-------|
+| `"invalid flat index: I (board has N squares)"` | `board_diff` | Index out of range or non-integer key |
+| `"delta must be an integer, got T for piece P"` | hand diffs | Non-integer delta |
+| `"cannot remove P: not found in hand"` | hand diffs | Removing more pieces than present |
+| `"too many pieces for board size (P pieces, N squares)"` | all | Total pieces would exceed board capacity |
 
 ## Design Principles
 
-- **Format-agnostic**: No dependency on EPIN, SIN, or any specific encoding.
-- **Protocol-aligned**: Structurally compatible with the Game Protocol's Position model.
-- **Purely functional**: No mutable state, no side effects, no processes.
-- **Validated at construction**: All invariants are enforced when building a position.
-- **Zero dependencies**: Only the Elixir standard library.
+**Immutable by nature.** Elixir data structures are immutable by default. Every `%Qi{}` struct is a value — transformation functions return new structs rather than mutating state. This eliminates an entire class of bugs around shared mutable state and makes positions safe to use as map keys, cache entries, or history snapshots.
 
-## Related Specifications
+**Performance-oriented internals.** The board is stored as a flat tuple for O(1) random access via `elem/2` and efficient updates via `put_elem/3`. Hands are stored as `%{piece => count}` maps for O(1) additions and removals. Transformations accept lists of tuples — lightweight to allocate and fast to iterate — rather than maps. String validation replaces coercion to avoid per-operation protocol dispatch.
 
-- [Game Protocol](https://sashite.dev/game-protocol/) — Conceptual foundation
-- [PON Specification](https://sashite.dev/specs/pon/1.0.0/) — JSON-based position format
-- [FEEN Specification](https://sashite.dev/specs/feen/1.0.0/) — Canonical string-based position format
-- [EPIN Specification](https://sashite.dev/specs/epin/1.0.0/) — Piece token format
-- [SIN Specification](https://sashite.dev/specs/sin/1.0.0/) — Style token format
+**Diff-based transformations.** Rather than rebuilding a full position from scratch, `board_diff` and hand diff functions express changes as deltas against the current state. This keeps the API surface small (four transformation functions cover all possible state transitions) while making the intent of each operation explicit.
+
+**Zero dependencies.** `Qi` relies only on the Elixir standard library. No transitive dependency tree to audit, no version conflicts to resolve.
+
+## Concurrency
+
+`%Qi{}` structs are plain Elixir data — fully immutable and safe to share across processes without synchronization. They can be sent in messages, stored in ETS, or held in GenServer state without risk of data races.
+
+## Ecosystem
+
+`Qi` is the positional core of the [Sashité](https://sashite.dev/) ecosystem. It models *what a position is* (board, hands, styles, turn) without prescribing *how positions are serialized* or *what moves are legal*.
+
+Other libraries in the ecosystem build on `Qi` to provide those capabilities: [FEEN](https://sashite.dev/specs/feen/1.0.0/) defines a canonical string encoding for positions, [PON](https://sashite.dev/specs/pon/1.0.0/) provides a JSON-based position format, [EPIN](https://sashite.dev/specs/epin/1.0.0/) specifies piece token syntax, and [SIN](https://sashite.dev/specs/sin/1.0.0/) specifies style token syntax. The [Game Protocol](https://sashite.dev/game-protocol/) describes the conceptual foundation that all these specifications share.
+
+## Notes for Reimplementors
+
+This section provides guidance for porting `Qi` to other languages.
+
+### API Surface
+
+The complete public API consists of:
+
+- **1 constructor** — `Qi.new/2`
+- **7 accessors** — `board`, `first_player_hand`, `second_player_hand`, `turn`, `first_player_style`, `second_player_style`, `shape` (struct fields)
+- **5 functions** — `board_diff/2`, `first_player_hand_diff/2`, `second_player_hand_diff/2`, `toggle/1`, `to_nested/1`
+- **2 constants** — `max_dimensions/0`, `max_dimension_size/0`
+
+### Key Semantic Contracts
+
+**Pieces and styles are strings.** Board squares, hand contents, and style values are all stored as strings. Non-string inputs are rejected at the boundary.
+
+**Piece equality is by value.** Hand operations use standard Elixir `==` for piece matching.
+
+**Piece cardinality is global.** The constraint `p ≤ n` counts pieces across all locations: board squares plus both hands. A transformation that adds a piece to a hand can exceed the limit even if the board has empty squares.
+
+**Nil means empty.** On the board, `nil` represents an empty square. Styles must not be nil — this is the only nil-related error at construction.
+
+**Validation order is guaranteed**: shape → styles. Tests assert which error is reported when multiple inputs are invalid simultaneously.
+
+**Hands are piece → count maps.** Internally, hands use `%{"P" => 2, "B" => 1}` rather than flat lists. This gives O(1) add/remove and makes count queries trivial. Empty entries (count reaching zero) are removed from the map.
+
+**The constructor creates an empty position**: board all nil, hands empty, turn is first player. Pieces are added via `board_diff/2` and hand diff functions.
 
 ## License
 
