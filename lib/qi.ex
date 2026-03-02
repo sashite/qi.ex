@@ -38,12 +38,15 @@ defmodule Qi do
 
   ## Constraints
 
-  | Constraint          | Value | Rationale                                      |
-  |---------------------|-------|-------------------------------------------------|
-  | Max dimensions      | 3     | Covers 1D, 2D, 3D boards                       |
-  | Max dimension size  | 255   | Fits in 8-bit integer; covers 255×255×255       |
-  | Board non-empty     | n ≥ 1 | A board must contain at least one square        |
-  | Piece cardinality   | p ≤ n | Pieces cannot exceed the number of squares      |
+  | Constraint          | Value  | Rationale                                      |
+  |---------------------|--------|-------------------------------------------------|
+  | Max dimensions      | 3      | Covers 1D, 2D, 3D boards                       |
+  | Max dimension size  | 255    | Fits in 8-bit integer; covers 255×255×255       |
+  | Max square count    | 65025  | Caps memory allocation (255² = 65025)           |
+  | Max piece bytesize  | 255    | Bounds piece string memory                      |
+  | Max style bytesize  | 255    | Bounds style string memory                      |
+  | Board non-empty     | n ≥ 1  | A board must contain at least one square        |
+  | Piece cardinality   | p ≤ n  | Pieces cannot exceed the number of squares      |
   """
 
   alias Qi.Board
@@ -73,19 +76,19 @@ defmodule Qi do
 
   defstruct @enforce_keys
 
-  @type t :: %__MODULE__{
-          board: tuple(),
-          first_player_hand: Hands.t(),
-          second_player_hand: Hands.t(),
-          turn: :first | :second,
-          first_player_style: String.t(),
-          second_player_style: String.t(),
-          shape: [pos_integer()],
-          square_count: pos_integer(),
-          board_piece_count: non_neg_integer(),
-          first_hand_count: non_neg_integer(),
-          second_hand_count: non_neg_integer()
-        }
+  @opaque t :: %__MODULE__{
+            board: tuple(),
+            first_player_hand: Hands.t(),
+            second_player_hand: Hands.t(),
+            turn: :first | :second,
+            first_player_style: String.t(),
+            second_player_style: String.t(),
+            shape: [pos_integer()],
+            square_count: pos_integer(),
+            board_piece_count: non_neg_integer(),
+            first_hand_count: non_neg_integer(),
+            second_hand_count: non_neg_integer()
+          }
 
   # ---------------------------------------------------------------------------
   # Constants
@@ -99,6 +102,18 @@ defmodule Qi do
   @spec max_dimension_size() :: pos_integer()
   def max_dimension_size, do: Board.max_dimension_size()
 
+  @doc "Maximum total number of squares on a board."
+  @spec max_square_count() :: pos_integer()
+  def max_square_count, do: Board.max_square_count()
+
+  @doc "Maximum bytesize of a piece string."
+  @spec max_piece_bytesize() :: pos_integer()
+  def max_piece_bytesize, do: Board.max_piece_bytesize()
+
+  @doc "Maximum bytesize of a style string."
+  @spec max_style_bytesize() :: pos_integer()
+  def max_style_bytesize, do: Styles.max_style_bytesize()
+
   # ---------------------------------------------------------------------------
   # Construction
   # ---------------------------------------------------------------------------
@@ -109,15 +124,19 @@ defmodule Qi do
   The board starts with all squares empty (`nil`), both hands start
   empty, and the turn defaults to `:first`.
 
-  Validation order is guaranteed: **shape**, then **styles** (first,
-  then second). When multiple errors exist, the first failing check
+  Validation order is guaranteed: **shape** (dimensions, then total
+  square count), then **styles** (first, then second; nil, then type,
+  then bytesize). When multiple errors exist, the first failing check
   determines the error.
 
   ## Parameters
 
     * `shape` — a list of 1 to 3 integer dimension sizes (each 1–255).
-    * `:first_player_style` — style for the first player (non-nil string).
-    * `:second_player_style` — style for the second player (non-nil string).
+      The total number of squares must not exceed 65025.
+    * `:first_player_style` — style for the first player (non-nil
+      string, at most 255 bytes).
+    * `:second_player_style` — style for the second player (non-nil
+      string, at most 255 bytes).
 
   ## Examples
 
@@ -170,7 +189,7 @@ defmodule Qi do
 
   Accepts a list of `{flat_index, piece}` tuples where each flat index
   is a 0-based integer in row-major order, and each piece is a string
-  or `nil` (empty square).
+  (at most 255 bytes) or `nil` (empty square).
 
   ## Examples
 
@@ -201,8 +220,8 @@ defmodule Qi do
   Returns a new position with the first player's hand modified.
 
   Accepts a list of `{piece, delta}` tuples where each piece is a
-  string and each delta is an integer (positive to add, negative to
-  remove, zero is a no-op).
+  string (at most 255 bytes) and each delta is an integer (positive
+  to add, negative to remove, zero is a no-op).
 
   ## Examples
 
@@ -226,8 +245,8 @@ defmodule Qi do
   Returns a new position with the second player's hand modified.
 
   Accepts a list of `{piece, delta}` tuples where each piece is a
-  string and each delta is an integer (positive to add, negative to
-  remove, zero is a no-op).
+  string (at most 255 bytes) and each delta is an integer (positive
+  to add, negative to remove, zero is a no-op).
 
   ## Examples
 

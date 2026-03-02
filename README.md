@@ -54,7 +54,7 @@ pos |> Qi.board_diff([{0, "+P"}])        # Promoted — stored as "+P"
 ```elixir
 # In mix.exs
 def deps do
-  [{:qi, "~> 2.0"}]
+  [{:qi, "~> 3.0"}]
 end
 ```
 
@@ -78,9 +78,9 @@ Creates a position with an empty board.
 
 **Parameters:**
 
-- `shape` — a list of one to three integer dimension sizes (each 1–255).
-- `:first_player_style` — style for the first player (non-nil string).
-- `:second_player_style` — style for the second player (non-nil string).
+- `shape` — a list of one to three integer dimension sizes (each 1–255). The total number of squares (product of dimensions) must not exceed 65,025.
+- `:first_player_style` — style for the first player (non-nil string, at most 255 bytes).
+- `:second_player_style` — style for the second player (non-nil string, at most 255 bytes).
 
 The board starts with all squares empty (`nil`), both hands start empty, and the turn defaults to `:first`.
 
@@ -90,7 +90,7 @@ Qi.new([8], first_player_style: "G", second_player_style: "g")          # 1D
 Qi.new([5, 5, 5], first_player_style: "R", second_player_style: "r")   # 3D
 ```
 
-**Raises** `ArgumentError` if shape constraints are violated or if a style is `nil` (see [Validation Errors](#validation-errors)).
+**Raises** `ArgumentError` if shape constraints are violated, if total squares exceed the limit, or if a style is `nil` or oversized (see [Validation Errors](#validation-errors)).
 
 ### Constants
 
@@ -98,10 +98,13 @@ Qi.new([5, 5, 5], first_player_style: "R", second_player_style: "r")   # 3D
 |----------|-------|-------------|
 | `Qi.max_dimensions()` | `3` | Maximum number of board dimensions |
 | `Qi.max_dimension_size()` | `255` | Maximum size of any single dimension |
+| `Qi.max_square_count()` | `65025` | Maximum total number of squares on a board |
+| `Qi.max_piece_bytesize()` | `255` | Maximum bytesize of a piece string |
+| `Qi.max_style_bytesize()` | `255` | Maximum bytesize of a style string |
 
 ### Accessors
 
-All fields are accessible directly on the struct.
+All public fields are accessible directly on the struct. The type is opaque — access internal fields only through the documented API.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -137,13 +140,13 @@ All transformation functions return a **new `%Qi{}` struct**. The original is ne
 
 Returns a new position with modified squares.
 
-Accepts a list of `{flat_index, piece}` tuples where each flat index is a 0-based integer in row-major order, and each piece is a string or `nil` (empty square).
+Accepts a list of `{flat_index, piece}` tuples where each flat index is a 0-based integer in row-major order, and each piece is a string (at most 255 bytes) or `nil` (empty square).
 
 ```elixir
 pos2 = Qi.board_diff(pos, [{12, nil}, {28, "P"}])
 ```
 
-**Raises** `ArgumentError` if an index is out of range or if the resulting total piece count exceeds the board size.
+**Raises** `ArgumentError` if an index is out of range, if a piece exceeds 255 bytes, or if the resulting total piece count exceeds the board size.
 
 See [Flat Indexing](#flat-indexing) for computing flat indices from coordinates.
 
@@ -152,7 +155,7 @@ See [Flat Indexing](#flat-indexing) for computing flat indices from coordinates.
 
 Returns a new position with a modified hand.
 
-Accepts a list of `{piece, delta}` tuples where each piece is a string and each delta is an integer (positive to add, negative to remove, zero is a no-op).
+Accepts a list of `{piece, delta}` tuples where each piece is a string (at most 255 bytes) and each delta is an integer (positive to add, negative to remove, zero is a no-op).
 
 ```elixir
 pos2 = Qi.first_player_hand_diff(pos, [{"P", 1}])               # Add one "P"
@@ -162,7 +165,7 @@ pos4 = Qi.second_player_hand_diff(pos, [{"p", 1}])              # Add one "p" to
 
 Internally, hands are stored as `%{piece => count}` maps. Adding and removing pieces is O(1) per entry.
 
-**Raises** `ArgumentError` if a delta is not an integer, if removing a piece not present, or if the resulting total piece count exceeds the board size.
+**Raises** `ArgumentError` if a delta is not an integer, if a piece exceeds 255 bytes, if removing a piece not present, or if the resulting total piece count exceeds the board size.
 
 #### `Qi.toggle(qi)` → `%Qi{}`
 
@@ -208,7 +211,7 @@ The `board` field is always a flat tuple. Use `Qi.to_nested/1` when a nested str
 
 Each `square` is either `nil` (empty) or a string (a piece).
 
-For a shape `[d1, d2, ..., dn]`, the total number of squares is `d1 × d2 × ... × dn`.
+For a shape `[d1, d2, ..., dn]`, the total number of squares is `d1 × d2 × ... × dn`. This total must not exceed 65,025 (`max_square_count/0`).
 
 ### Flat Indexing
 
@@ -269,8 +272,8 @@ Qi.first_player_hand_diff(pos, [{"c", 1}])
 
 Construction validates fields in a guaranteed order. When multiple errors exist, the **first** failing check determines the error message:
 
-1. **Shape** — dimension count, types, and bounds
-2. **Styles** — nil checks (first, then second)
+1. **Shape** — dimension count, types, bounds, then total square count
+2. **Styles** — nil checks (first, then second), then type checks, then bytesize checks
 
 This order is part of the public API contract.
 
@@ -283,14 +286,22 @@ This order is part of the public API contract.
 | `"dimension size must be an integer, got T"` | Non-integer dimension size |
 | `"dimension size must be at least 1, got N"` | Dimension size is zero or negative |
 | `"dimension size N exceeds maximum of 255"` | Dimension size exceeds 255 |
+| `"board exceeds 65025 squares (got N)"` | Total square count exceeds limit |
 | `"first player style must not be nil"` | First style is `nil` |
 | `"second player style must not be nil"` | Second style is `nil` |
+| `"first player style must be a String"` | First style is not a String |
+| `"second player style must be a String"` | Second style is not a String |
+| `"first player style exceeds 255 bytes"` | First style is too large |
+| `"second player style exceeds 255 bytes"` | Second style is too large |
 
 ### Transformation Errors
 
 | Error message | Function | Cause |
 |---------------|----------|-------|
 | `"invalid flat index: I (board has N squares)"` | `board_diff` | Index out of range or non-integer key |
+| `"piece must be a string or nil, got T"` | `board_diff` | Non-string piece value |
+| `"piece exceeds 255 bytes (got N)"` | `board_diff`, hand diffs | Piece string too large |
+| `"piece must be a string, got T"` | hand diffs | Non-string piece key |
 | `"delta must be an integer, got T for piece P"` | hand diffs | Non-integer delta |
 | `"cannot remove P: not found in hand"` | hand diffs | Removing more pieces than present |
 | `"too many pieces for board size (P pieces, N squares)"` | all | Total pieces would exceed board capacity |
@@ -298,6 +309,8 @@ This order is part of the public API contract.
 ## Design Principles
 
 **Immutable by nature.** Elixir data structures are immutable by default. Every `%Qi{}` struct is a value — transformation functions return new structs rather than mutating state. This eliminates an entire class of bugs around shared mutable state and makes positions safe to use as map keys, cache entries, or history snapshots.
+
+**Bounded resource consumption.** All inputs are bounded: board dimensions (1–255 per axis, 65,025 total squares), piece strings (255 bytes), style strings (255 bytes). No input can trigger unbounded memory allocation. The library is safe to use in an internet-facing service with zero additional sanitization by the caller.
 
 **Performance-oriented internals.** The board is stored as a flat tuple for O(1) random access via `elem/2` and efficient updates via `put_elem/3`. Hands are stored as `%{piece => count}` maps for O(1) additions and removals. Transformations accept lists of tuples — lightweight to allocate and fast to iterate — rather than maps. String validation replaces coercion to avoid per-operation protocol dispatch.
 
@@ -326,11 +339,13 @@ The complete public API consists of:
 - **1 constructor** — `Qi.new/2`
 - **7 accessors** — `board`, `first_player_hand`, `second_player_hand`, `turn`, `first_player_style`, `second_player_style`, `shape` (struct fields)
 - **5 functions** — `board_diff/2`, `first_player_hand_diff/2`, `second_player_hand_diff/2`, `toggle/1`, `to_nested/1`
-- **2 constants** — `max_dimensions/0`, `max_dimension_size/0`
+- **5 constants** — `max_dimensions/0`, `max_dimension_size/0`, `max_square_count/0`, `max_piece_bytesize/0`, `max_style_bytesize/0`
 
 ### Key Semantic Contracts
 
 **Pieces and styles are strings.** Board squares, hand contents, and style values are all stored as strings. Non-string inputs are rejected at the boundary.
+
+**All inputs are bounded.** Dimensions are capped at 255, total squares at 65,025, piece strings at 255 bytes, style strings at 255 bytes. No input can trigger unbounded memory allocation. Reimplementations must enforce these same limits to maintain the security properties.
 
 **Piece equality is by value.** Hand operations use standard Elixir `==` for piece matching.
 
@@ -338,11 +353,13 @@ The complete public API consists of:
 
 **Nil means empty.** On the board, `nil` represents an empty square. Styles must not be nil — this is the only nil-related error at construction.
 
-**Validation order is guaranteed**: shape → styles. Tests assert which error is reported when multiple inputs are invalid simultaneously.
+**Validation order is guaranteed**: shape (dimensions → total square count) → styles (nil → type → bytesize). Tests assert which error is reported when multiple inputs are invalid simultaneously.
 
 **Hands are piece → count maps.** Internally, hands use `%{"P" => 2, "B" => 1}` rather than flat lists. This gives O(1) add/remove and makes count queries trivial. Empty entries (count reaching zero) are removed from the map.
 
 **The constructor creates an empty position**: board all nil, hands empty, turn is first player. Pieces are added via `board_diff/2` and hand diff functions.
+
+**The type is opaque.** `Qi.t()` is declared `@opaque`. Consumers should access fields only through the documented API. Direct construction of `%Qi{}` structs or modification of internal fields bypasses validation and may corrupt invariants. Dialyzer reports violations of this contract.
 
 ## License
 

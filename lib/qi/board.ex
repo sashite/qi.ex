@@ -26,6 +26,8 @@ defmodule Qi.Board do
 
   @max_dimensions 3
   @max_dimension_size 255
+  @max_square_count 65_025
+  @max_piece_bytesize 255
 
   @doc "Maximum number of board dimensions."
   @spec max_dimensions() :: pos_integer()
@@ -35,6 +37,14 @@ defmodule Qi.Board do
   @spec max_dimension_size() :: pos_integer()
   def max_dimension_size, do: @max_dimension_size
 
+  @doc "Maximum total number of squares on a board."
+  @spec max_square_count() :: pos_integer()
+  def max_square_count, do: @max_square_count
+
+  @doc "Maximum bytesize of a piece string."
+  @spec max_piece_bytesize() :: pos_integer()
+  def max_piece_bytesize, do: @max_piece_bytesize
+
   # ---------------------------------------------------------------------------
   # Shape validation
   # ---------------------------------------------------------------------------
@@ -43,7 +53,8 @@ defmodule Qi.Board do
   Validates a board shape and returns the total number of squares.
 
   A shape is a list of 1 to #{@max_dimensions} positive integers, each at
-  most #{@max_dimension_size}.
+  most #{@max_dimension_size}. The total number of squares (product of all
+  dimensions) must not exceed #{@max_square_count}.
 
   ## Examples
 
@@ -61,11 +72,15 @@ defmodule Qi.Board do
 
       iex> Qi.Board.validate_shape([8, 8, 8, 8])
       {:error, %ArgumentError{message: "board exceeds 3 dimensions (got 4)"}}
+
+      iex> Qi.Board.validate_shape([255, 255, 255])
+      {:error, %ArgumentError{message: "board exceeds 65025 squares (got 16581375)"}}
   """
   @spec validate_shape(term()) :: {:ok, pos_integer()} | {:error, Exception.t()}
   def validate_shape(shape) when is_list(shape) and shape != [] do
-    with :ok <- validate_dimension_count(shape) do
-      validate_dimension_values(shape, 1)
+    with :ok <- validate_dimension_count(shape),
+         {:ok, product} <- validate_dimension_values(shape, 1) do
+      validate_square_count(product)
     end
   end
 
@@ -111,6 +126,17 @@ defmodule Qi.Board do
      }}
   end
 
+  defp validate_square_count(product) when product <= @max_square_count do
+    {:ok, product}
+  end
+
+  defp validate_square_count(product) do
+    {:error,
+     %ArgumentError{
+       message: "board exceeds #{@max_square_count} squares (got #{product})"
+     }}
+  end
+
   # ---------------------------------------------------------------------------
   # Board creation
   # ---------------------------------------------------------------------------
@@ -136,9 +162,10 @@ defmodule Qi.Board do
   Applies a list of changes to a board and returns the piece count delta.
 
   Each change is a `{flat_index, piece}` tuple where `piece` is a
-  `String.t()` or `nil` (to clear a square).
+  `String.t()` (at most #{@max_piece_bytesize} bytes) or `nil` (to clear
+  a square).
 
-  Returns `{:ok, {new_board, piece_delta}}` where `piece_delta` is the net
+  Returns `{:ok, new_board, piece_delta}` where `piece_delta` is the net
   change in piece count (positive = pieces added, negative = pieces removed).
 
   ## Examples
@@ -183,7 +210,16 @@ defmodule Qi.Board do
   end
 
   defp validate_piece(nil), do: :ok
-  defp validate_piece(piece) when is_binary(piece), do: :ok
+
+  defp validate_piece(piece) when is_binary(piece) and byte_size(piece) <= @max_piece_bytesize,
+    do: :ok
+
+  defp validate_piece(piece) when is_binary(piece) do
+    {:error,
+     %ArgumentError{
+       message: "piece exceeds #{@max_piece_bytesize} bytes (got #{byte_size(piece)})"
+     }}
+  end
 
   defp validate_piece(piece) do
     {:error,

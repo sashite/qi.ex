@@ -19,6 +19,18 @@ defmodule Qi.BoardTest do
     end
   end
 
+  describe "max_square_count/0" do
+    test "returns 65025" do
+      assert Board.max_square_count() == 65_025
+    end
+  end
+
+  describe "max_piece_bytesize/0" do
+    test "returns 255" do
+      assert Board.max_piece_bytesize() == 255
+    end
+  end
+
   # ===========================================================================
   # validate_shape/1 — valid shapes
   # ===========================================================================
@@ -54,7 +66,7 @@ defmodule Qi.BoardTest do
       assert {:ok, 90} = Board.validate_shape([10, 9])
     end
 
-    test "boundary: 255×255" do
+    test "boundary: 255×255 (exactly max_square_count)" do
       assert {:ok, 65_025} = Board.validate_shape([255, 255])
     end
 
@@ -76,8 +88,12 @@ defmodule Qi.BoardTest do
       assert {:ok, 125} = Board.validate_shape([5, 5, 5])
     end
 
-    test "boundary: 255×255×255" do
-      assert {:ok, 16_581_375} = Board.validate_shape([255, 255, 255])
+    test "boundary: 255×255×1 (exactly max_square_count)" do
+      assert {:ok, 65_025} = Board.validate_shape([255, 255, 1])
+    end
+
+    test "boundary: 1×255×255 (exactly max_square_count)" do
+      assert {:ok, 65_025} = Board.validate_shape([1, 255, 255])
     end
   end
 
@@ -192,6 +208,33 @@ defmodule Qi.BoardTest do
     end
   end
 
+  describe "validate_shape/1 rejects square count exceeding limit" do
+    test "255×255×255 exceeds 65025" do
+      assert {:error, %ArgumentError{message: "board exceeds 65025 squares (got 16581375)"}} =
+               Board.validate_shape([255, 255, 255])
+    end
+
+    test "256×256 (individual dims valid after count check) exceeds 65025" do
+      # 256 exceeds max_dimension_size, so dimension check fires first
+      assert {:error, %ArgumentError{message: "dimension size 256 exceeds maximum of 255"}} =
+               Board.validate_shape([256, 256])
+    end
+
+    test "255×255×2 exceeds 65025" do
+      assert {:error, %ArgumentError{message: "board exceeds 65025 squares (got 130050)"}} =
+               Board.validate_shape([255, 255, 2])
+    end
+
+    test "boundary: 255×255 is exactly at the limit" do
+      assert {:ok, 65_025} = Board.validate_shape([255, 255])
+    end
+
+    test "boundary: one square over the limit via 3D" do
+      # 255 × 255 × 1 = 65025 (ok), but 255 × 128 × 2 = 65280 (over)
+      assert {:error, %ArgumentError{}} = Board.validate_shape([255, 128, 2])
+    end
+  end
+
   describe "validate_shape/1 validation order" do
     test "dimension count checked before dimension values" do
       # 4D with invalid sizes — dimension count error should come first
@@ -202,6 +245,12 @@ defmodule Qi.BoardTest do
     test "first invalid dimension reported" do
       assert {:error, %ArgumentError{message: "dimension size must be at least 1, got 0"}} =
                Board.validate_shape([0, 256])
+    end
+
+    test "dimension values checked before square count" do
+      # [0, 255, 255] — dimension value error fires before product check
+      assert {:error, %ArgumentError{message: "dimension size must be at least 1, got 0"}} =
+               Board.validate_shape([0, 255, 255])
     end
   end
 
@@ -310,6 +359,27 @@ defmodule Qi.BoardTest do
       assert elem(new_board, 1) == "C:K^"
     end
 
+    test "piece at exactly 255 bytes" do
+      piece = String.duplicate("A", 255)
+      board = Board.new(2)
+      assert {:ok, new_board, 1} = Board.diff(board, [{0, piece}])
+      assert elem(new_board, 0) == piece
+    end
+
+    test "empty string piece" do
+      board = Board.new(2)
+      assert {:ok, new_board, 1} = Board.diff(board, [{0, ""}])
+      assert elem(new_board, 0) == ""
+    end
+
+    test "multi-byte UTF-8 piece within limit" do
+      # "é" is 2 bytes, 127 × 2 = 254 bytes ≤ 255
+      piece = String.duplicate("é", 127)
+      board = Board.new(2)
+      assert {:ok, new_board, 1} = Board.diff(board, [{0, piece}])
+      assert elem(new_board, 0) == piece
+    end
+
     test "chess starting position (32 pieces on 64 squares)" do
       board = Board.new(64)
 
@@ -406,6 +476,43 @@ defmodule Qi.BoardTest do
     end
   end
 
+  describe "diff/2 rejects oversized pieces" do
+    test "piece at 256 bytes" do
+      piece = String.duplicate("A", 256)
+
+      assert {:error, %ArgumentError{message: "piece exceeds 255 bytes (got 256)"}} =
+               Board.diff(Board.new(2), [{0, piece}])
+    end
+
+    test "piece far over limit" do
+      piece = String.duplicate("X", 1000)
+
+      assert {:error, %ArgumentError{message: "piece exceeds 255 bytes (got 1000)"}} =
+               Board.diff(Board.new(2), [{0, piece}])
+    end
+
+    test "multi-byte UTF-8 piece exceeding limit" do
+      # "é" is 2 bytes, 128 × 2 = 256 bytes > 255
+      piece = String.duplicate("é", 128)
+
+      assert {:error, %ArgumentError{message: "piece exceeds 255 bytes (got 256)"}} =
+               Board.diff(Board.new(2), [{0, piece}])
+    end
+
+    test "valid change before oversized piece" do
+      oversized = String.duplicate("A", 256)
+
+      assert {:error, %ArgumentError{message: "piece exceeds 255 bytes (got 256)"}} =
+               Board.diff(Board.new(4), [{0, "K"}, {1, oversized}])
+    end
+
+    test "nil bypasses bytesize check" do
+      # nil is valid regardless of any size concern
+      board = Board.new(2)
+      assert {:ok, _, 0} = Board.diff(board, [{0, nil}])
+    end
+  end
+
   # ===========================================================================
   # diff/2 — delta tracking
   # ===========================================================================
@@ -437,6 +544,23 @@ defmodule Qi.BoardTest do
     test "mixed add and remove" do
       {:ok, board, _} = Board.diff(Board.new(4), [{0, "K"}, {1, "Q"}])
       assert {:ok, _, -1} = Board.diff(board, [{0, nil}, {2, "R"}, {1, nil}])
+    end
+  end
+
+  # ===========================================================================
+  # diff/2 — validation order
+  # ===========================================================================
+
+  describe "diff/2 validation order" do
+    test "index checked before piece type" do
+      assert {:error, %ArgumentError{message: "invalid flat index: 99 (board has 2 squares)"}} =
+               Board.diff(Board.new(2), [{99, :not_a_string}])
+    end
+
+    test "piece type checked before piece bytesize" do
+      # :K is not a string — type error, not bytesize error
+      assert {:error, %ArgumentError{message: "piece must be a string or nil, got :K"}} =
+               Board.diff(Board.new(2), [{0, :K}])
     end
   end
 

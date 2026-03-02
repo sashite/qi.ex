@@ -4,6 +4,16 @@ defmodule Qi.HandsTest do
   alias Qi.Hands
 
   # ===========================================================================
+  # Constants
+  # ===========================================================================
+
+  describe "max_piece_bytesize/0" do
+    test "returns 255" do
+      assert Hands.max_piece_bytesize() == 255
+    end
+  end
+
+  # ===========================================================================
   # new/0
   # ===========================================================================
 
@@ -43,6 +53,23 @@ defmodule Qi.HandsTest do
     test "pieces with special characters" do
       assert {:ok, hand, 2} = Hands.diff(%{}, [{"+P", 1}, {"C:B", 1}])
       assert hand == %{"+P" => 1, "C:B" => 1}
+    end
+
+    test "piece at exactly 255 bytes" do
+      piece = String.duplicate("A", 255)
+      assert {:ok, hand, 1} = Hands.diff(%{}, [{piece, 1}])
+      assert hand == %{piece => 1}
+    end
+
+    test "empty string piece" do
+      assert {:ok, %{"" => 1}, 1} = Hands.diff(%{}, [{"", 1}])
+    end
+
+    test "multi-byte UTF-8 piece within limit" do
+      # "é" is 2 bytes, 127 × 2 = 254 bytes ≤ 255
+      piece = String.duplicate("é", 127)
+      assert {:ok, hand, 1} = Hands.diff(%{}, [{piece, 1}])
+      assert hand == %{piece => 1}
     end
   end
 
@@ -88,7 +115,9 @@ defmodule Qi.HandsTest do
     end
 
     test "net negative delta" do
-      assert {:ok, hand, -2} = Hands.diff(%{"P" => 2, "B" => 1}, [{"P", -2}, {"B", -1}, {"N", 1}])
+      assert {:ok, hand, -2} =
+               Hands.diff(%{"P" => 2, "B" => 1}, [{"P", -2}, {"B", -1}, {"N", 1}])
+
       assert hand == %{"N" => 1}
     end
   end
@@ -110,6 +139,12 @@ defmodule Qi.HandsTest do
       assert {:ok, %{}, 0} = Hands.diff(%{}, [{"X", 0}])
     end
 
+    test "zero delta bypasses bytesize check" do
+      # 256-byte piece with delta 0 — should be a no-op, not an error
+      oversized = String.duplicate("A", 256)
+      assert {:ok, %{}, 0} = Hands.diff(%{}, [{oversized, 0}])
+    end
+
     test "empty changes list" do
       assert {:ok, %{"P" => 1}, 0} = Hands.diff(%{"P" => 1}, [])
     end
@@ -128,6 +163,48 @@ defmodule Qi.HandsTest do
       original = %{"P" => 1}
       {:ok, _new, _delta} = Hands.diff(original, [{"P", 1}])
       assert original == %{"P" => 1}
+    end
+  end
+
+  # ===========================================================================
+  # diff/2 — error: oversized pieces
+  # ===========================================================================
+
+  describe "diff/2 rejects oversized pieces" do
+    test "piece at 256 bytes" do
+      piece = String.duplicate("A", 256)
+
+      assert {:error, %ArgumentError{message: "piece exceeds 255 bytes (got 256)"}} =
+               Hands.diff(%{}, [{piece, 1}])
+    end
+
+    test "piece far over limit" do
+      piece = String.duplicate("X", 1000)
+
+      assert {:error, %ArgumentError{message: "piece exceeds 255 bytes (got 1000)"}} =
+               Hands.diff(%{}, [{piece, 1}])
+    end
+
+    test "multi-byte UTF-8 piece exceeding limit" do
+      # "é" is 2 bytes, 128 × 2 = 256 bytes > 255
+      piece = String.duplicate("é", 128)
+
+      assert {:error, %ArgumentError{message: "piece exceeds 255 bytes (got 256)"}} =
+               Hands.diff(%{}, [{piece, 1}])
+    end
+
+    test "oversized piece with negative delta" do
+      piece = String.duplicate("A", 256)
+
+      assert {:error, %ArgumentError{message: "piece exceeds 255 bytes (got 256)"}} =
+               Hands.diff(%{}, [{piece, -1}])
+    end
+
+    test "valid change before oversized piece" do
+      oversized = String.duplicate("A", 256)
+
+      assert {:error, %ArgumentError{message: "piece exceeds 255 bytes (got 256)"}} =
+               Hands.diff(%{}, [{"P", 1}, {oversized, 1}])
     end
   end
 
@@ -206,6 +283,32 @@ defmodule Qi.HandsTest do
     test "tuple piece" do
       assert {:error, %ArgumentError{message: "piece must be a string, got {:pawn, :first}"}} =
                Hands.diff(%{}, [{{:pawn, :first}, 1}])
+    end
+  end
+
+  # ===========================================================================
+  # diff/2 — validation order
+  # ===========================================================================
+
+  describe "diff/2 validation order" do
+    test "piece type checked before piece bytesize" do
+      # atom is not a string — type error, not bytesize error
+      assert {:error, %ArgumentError{message: "piece must be a string, got :X"}} =
+               Hands.diff(%{}, [{:X, 1}])
+    end
+
+    test "piece bytesize checked before delta type" do
+      oversized = String.duplicate("A", 256)
+
+      # Bytesize is only checked when delta is a valid integer.
+      # With a non-integer delta, the delta type clause matches first.
+      assert {:error, %ArgumentError{message: "piece exceeds 255 bytes (got 256)"}} =
+               Hands.diff(%{}, [{oversized, 1}])
+    end
+
+    test "zero delta bypasses all piece validation" do
+      oversized = String.duplicate("A", 256)
+      assert {:ok, %{}, 0} = Hands.diff(%{}, [{oversized, 0}])
     end
   end
 

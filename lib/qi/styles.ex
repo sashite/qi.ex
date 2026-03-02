@@ -16,11 +16,19 @@ defmodule Qi.Styles do
       {:error, %ArgumentError{message: "second player style must not be nil"}}
   """
 
+  @max_style_bytesize 255
+
+  @doc "Maximum bytesize of a style string."
+  @spec max_style_bytesize() :: pos_integer()
+  def max_style_bytesize, do: @max_style_bytesize
+
   @doc """
   Validates a single player style.
 
-  Returns `:ok` if the style is a non-nil string, or
-  `{:error, Exception.t()}` otherwise.
+  Returns `:ok` if the style is a non-nil string of at most
+  #{@max_style_bytesize} bytes, or `{:error, Exception.t()}` otherwise.
+
+  Validation order: nil → type → bytesize.
 
   ## Examples
 
@@ -35,9 +43,17 @@ defmodule Qi.Styles do
 
       iex> Qi.Styles.validate(:second, :chess)
       {:error, %ArgumentError{message: "second player style must be a String"}}
+
+      iex> Qi.Styles.validate(:first, String.duplicate("A", 256))
+      {:error, %ArgumentError{message: "first player style exceeds 255 bytes"}}
   """
   @spec validate(:first | :second, term()) :: :ok | {:error, Exception.t()}
-  def validate(_side, style) when is_binary(style), do: :ok
+  def validate(_side, style) when is_binary(style) and byte_size(style) <= @max_style_bytesize,
+    do: :ok
+
+  def validate(side, style) when is_binary(style) do
+    {:error, %ArgumentError{message: "#{side} player style exceeds #{@max_style_bytesize} bytes"}}
+  end
 
   def validate(side, nil) do
     {:error, %ArgumentError{message: "#{side} player style must not be nil"}}

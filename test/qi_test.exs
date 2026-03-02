@@ -17,6 +17,24 @@ defmodule QiTest do
     end
   end
 
+  describe "max_square_count/0" do
+    test "returns 65025" do
+      assert Qi.max_square_count() == 65_025
+    end
+  end
+
+  describe "max_piece_bytesize/0" do
+    test "returns 255" do
+      assert Qi.max_piece_bytesize() == 255
+    end
+  end
+
+  describe "max_style_bytesize/0" do
+    test "returns 255" do
+      assert Qi.max_style_bytesize() == 255
+    end
+  end
+
   # ===========================================================================
   # new/2 — valid constructions
   # ===========================================================================
@@ -92,6 +110,36 @@ defmodule QiTest do
       pos = Qi.new([8, 8], first_player_style: "C", second_player_style: "c")
       assert %Qi{} = pos
     end
+
+    test "2D boundary: 255×255 = 65025 squares" do
+      pos = Qi.new([255, 255], first_player_style: "C", second_player_style: "c")
+      assert tuple_size(pos.board) == 65_025
+    end
+
+    test "3D boundary: 255×255×1 = 65025 squares" do
+      pos = Qi.new([255, 255, 1], first_player_style: "C", second_player_style: "c")
+      assert tuple_size(pos.board) == 65_025
+    end
+
+    test "style at exactly 255 bytes" do
+      style = String.duplicate("A", 255)
+      pos = Qi.new([1], first_player_style: style, second_player_style: style)
+      assert pos.first_player_style == style
+      assert pos.second_player_style == style
+    end
+
+    test "multi-byte UTF-8 style within limit" do
+      # "é" is 2 bytes, 127 × 2 = 254 bytes ≤ 255
+      style = String.duplicate("é", 127)
+      pos = Qi.new([1], first_player_style: style, second_player_style: "c")
+      assert pos.first_player_style == style
+    end
+
+    test "empty string styles" do
+      pos = Qi.new([1], first_player_style: "", second_player_style: "")
+      assert pos.first_player_style == ""
+      assert pos.second_player_style == ""
+    end
   end
 
   # ===========================================================================
@@ -131,6 +179,30 @@ defmodule QiTest do
   end
 
   # ===========================================================================
+  # new/2 — construction errors (square count)
+  # ===========================================================================
+
+  describe "new/2 rejects excessive square count" do
+    test "3D 255×255×255" do
+      assert_raise ArgumentError, "board exceeds 65025 squares (got 16581375)", fn ->
+        Qi.new([255, 255, 255], first_player_style: "C", second_player_style: "c")
+      end
+    end
+
+    test "3D 255×255×2" do
+      assert_raise ArgumentError, "board exceeds 65025 squares (got 130050)", fn ->
+        Qi.new([255, 255, 2], first_player_style: "C", second_player_style: "c")
+      end
+    end
+
+    test "3D just over limit: 255×128×2 = 65280" do
+      assert_raise ArgumentError, "board exceeds 65025 squares (got 65280)", fn ->
+        Qi.new([255, 128, 2], first_player_style: "C", second_player_style: "c")
+      end
+    end
+  end
+
+  # ===========================================================================
   # new/2 — construction errors (styles)
   # ===========================================================================
 
@@ -158,6 +230,43 @@ defmodule QiTest do
         Qi.new([8, 8], first_player_style: "C", second_player_style: :chess)
       end
     end
+
+    test "first style exceeds 255 bytes" do
+      oversized = String.duplicate("A", 256)
+
+      assert_raise ArgumentError, "first player style exceeds 255 bytes", fn ->
+        Qi.new([8, 8], first_player_style: oversized, second_player_style: "c")
+      end
+    end
+
+    test "second style exceeds 255 bytes" do
+      oversized = String.duplicate("A", 256)
+
+      assert_raise ArgumentError, "second player style exceeds 255 bytes", fn ->
+        Qi.new([8, 8], first_player_style: "C", second_player_style: oversized)
+      end
+    end
+
+    test "multi-byte UTF-8 style exceeding limit" do
+      # "é" is 2 bytes, 128 × 2 = 256 bytes > 255
+      oversized = String.duplicate("é", 128)
+
+      assert_raise ArgumentError, "first player style exceeds 255 bytes", fn ->
+        Qi.new([8, 8], first_player_style: oversized, second_player_style: "c")
+      end
+    end
+
+    test "integer style" do
+      assert_raise ArgumentError, "first player style must be a String", fn ->
+        Qi.new([8, 8], first_player_style: 0, second_player_style: "c")
+      end
+    end
+
+    test "false style" do
+      assert_raise ArgumentError, "first player style must be a String", fn ->
+        Qi.new([1], first_player_style: false, second_player_style: "c")
+      end
+    end
   end
 
   # ===========================================================================
@@ -171,9 +280,44 @@ defmodule QiTest do
       end
     end
 
+    test "dimension values checked before square count" do
+      # 256 is invalid dimension, but also would produce huge square count
+      assert_raise ArgumentError, "dimension size 256 exceeds maximum of 255", fn ->
+        Qi.new([256, 256], first_player_style: "C", second_player_style: "c")
+      end
+    end
+
+    test "square count checked before styles" do
+      assert_raise ArgumentError, ~r/board exceeds 65025 squares/, fn ->
+        Qi.new([255, 255, 255], first_player_style: nil, second_player_style: nil)
+      end
+    end
+
     test "first style error takes priority over second style error" do
       assert_raise ArgumentError, "first player style must not be nil", fn ->
         Qi.new([8, 8], first_player_style: nil, second_player_style: nil)
+      end
+    end
+
+    test "style nil checked before style type" do
+      assert_raise ArgumentError, "first player style must not be nil", fn ->
+        Qi.new([8, 8], first_player_style: nil, second_player_style: :chess)
+      end
+    end
+
+    test "style type checked before style bytesize" do
+      oversized = String.duplicate("A", 256)
+
+      assert_raise ArgumentError, "first player style must be a String", fn ->
+        Qi.new([8, 8], first_player_style: :chess, second_player_style: oversized)
+      end
+    end
+
+    test "first style bytesize checked before second style nil" do
+      oversized = String.duplicate("A", 256)
+
+      assert_raise ArgumentError, "first player style exceeds 255 bytes", fn ->
+        Qi.new([8, 8], first_player_style: oversized, second_player_style: nil)
       end
     end
   end
@@ -238,6 +382,21 @@ defmodule QiTest do
       assert pos3.shape == [8, 8]
     end
 
+    test "piece at exactly 255 bytes" do
+      piece = String.duplicate("A", 255)
+      pos = Qi.new([4], first_player_style: "C", second_player_style: "c")
+      pos2 = Qi.board_diff(pos, [{0, piece}])
+      assert elem(pos2.board, 0) == piece
+    end
+
+    test "multi-byte UTF-8 piece within limit" do
+      # "é" is 2 bytes, 127 × 2 = 254 bytes ≤ 255
+      piece = String.duplicate("é", 127)
+      pos = Qi.new([4], first_player_style: "C", second_player_style: "c")
+      pos2 = Qi.board_diff(pos, [{0, piece}])
+      assert elem(pos2.board, 0) == piece
+    end
+
     test "rejects invalid index" do
       pos = Qi.new([4], first_player_style: "C", second_player_style: "c")
 
@@ -251,6 +410,25 @@ defmodule QiTest do
 
       assert_raise ArgumentError, ~r/piece must be a string or nil/, fn ->
         Qi.board_diff(pos, [{0, :K}])
+      end
+    end
+
+    test "rejects oversized piece" do
+      oversized = String.duplicate("A", 256)
+      pos = Qi.new([4], first_player_style: "C", second_player_style: "c")
+
+      assert_raise ArgumentError, "piece exceeds 255 bytes (got 256)", fn ->
+        Qi.board_diff(pos, [{0, oversized}])
+      end
+    end
+
+    test "rejects multi-byte UTF-8 oversized piece" do
+      # "é" is 2 bytes, 128 × 2 = 256 bytes > 255
+      oversized = String.duplicate("é", 128)
+      pos = Qi.new([4], first_player_style: "C", second_player_style: "c")
+
+      assert_raise ArgumentError, "piece exceeds 255 bytes (got 256)", fn ->
+        Qi.board_diff(pos, [{0, oversized}])
       end
     end
   end
@@ -297,6 +475,12 @@ defmodule QiTest do
       assert pos2.board == pos.board
     end
 
+    test "piece at exactly 255 bytes", %{pos: pos} do
+      piece = String.duplicate("A", 255)
+      pos2 = Qi.first_player_hand_diff(pos, [{piece, 1}])
+      assert pos2.first_player_hand == %{piece => 1}
+    end
+
     test "rejects non-integer delta", %{pos: pos} do
       assert_raise ArgumentError, ~r/delta must be an integer/, fn ->
         Qi.first_player_hand_diff(pos, [{"P", :one}])
@@ -306,6 +490,22 @@ defmodule QiTest do
     test "rejects removing absent piece", %{pos: pos} do
       assert_raise ArgumentError, ~r/cannot remove/, fn ->
         Qi.first_player_hand_diff(pos, [{"P", -1}])
+      end
+    end
+
+    test "rejects oversized piece", %{pos: pos} do
+      oversized = String.duplicate("A", 256)
+
+      assert_raise ArgumentError, "piece exceeds 255 bytes (got 256)", fn ->
+        Qi.first_player_hand_diff(pos, [{oversized, 1}])
+      end
+    end
+
+    test "rejects multi-byte UTF-8 oversized piece", %{pos: pos} do
+      oversized = String.duplicate("é", 128)
+
+      assert_raise ArgumentError, "piece exceeds 255 bytes (got 256)", fn ->
+        Qi.first_player_hand_diff(pos, [{oversized, 1}])
       end
     end
   end
@@ -346,6 +546,14 @@ defmodule QiTest do
     test "rejects removing absent piece", %{pos: pos} do
       assert_raise ArgumentError, ~r/cannot remove/, fn ->
         Qi.second_player_hand_diff(pos, [{"p", -1}])
+      end
+    end
+
+    test "rejects oversized piece", %{pos: pos} do
+      oversized = String.duplicate("A", 256)
+
+      assert_raise ArgumentError, "piece exceeds 255 bytes (got 256)", fn ->
+        Qi.second_player_hand_diff(pos, [{oversized, 1}])
       end
     end
   end

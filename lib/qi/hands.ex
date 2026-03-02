@@ -19,6 +19,12 @@ defmodule Qi.Hands do
       %{"B" => 1, "P" => 1}
   """
 
+  @max_piece_bytesize 255
+
+  @doc "Maximum bytesize of a piece string."
+  @spec max_piece_bytesize() :: pos_integer()
+  def max_piece_bytesize, do: @max_piece_bytesize
+
   @typedoc "A hand: piece string to positive count."
   @type t :: %{optional(String.t()) => pos_integer()}
 
@@ -41,8 +47,9 @@ defmodule Qi.Hands do
   Applies a list of changes to a hand and returns the piece count delta.
 
   Each change is a `{piece, delta}` tuple where `piece` is a `String.t()`
-  and `delta` is an integer (positive to add, negative to remove, zero is
-  a no-op). Entries whose count reaches zero are removed from the map.
+  (at most #{@max_piece_bytesize} bytes) and `delta` is an integer
+  (positive to add, negative to remove, zero is a no-op). Entries whose
+  count reaches zero are removed from the map.
 
   Returns `{:ok, new_hand, piece_delta}` where `piece_delta` is the net
   change in total piece count.
@@ -81,7 +88,8 @@ defmodule Qi.Hands do
   end
 
   defp apply_changes(hand, [{piece, amount} | rest], delta)
-       when is_binary(piece) and is_integer(amount) do
+       when is_binary(piece) and byte_size(piece) <= @max_piece_bytesize and
+              is_integer(amount) do
     current = Map.get(hand, piece, 0)
     new_count = current + amount
 
@@ -95,6 +103,15 @@ defmodule Qi.Hands do
       true ->
         {:error, %ArgumentError{message: "cannot remove #{piece}: not found in hand"}}
     end
+  end
+
+  defp apply_changes(_hand, [{piece, amount} | _], _delta)
+       when is_binary(piece) and byte_size(piece) > @max_piece_bytesize and
+              is_integer(amount) do
+    {:error,
+     %ArgumentError{
+       message: "piece exceeds #{@max_piece_bytesize} bytes (got #{byte_size(piece)})"
+     }}
   end
 
   defp apply_changes(_hand, [{piece, amount} | _], _delta)
